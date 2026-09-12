@@ -40,47 +40,49 @@ ON CONFLICT(code) DO NOTHING;
 
 -- Keyword rules used to file incoming eBay listings into categories.
 DELETE FROM ebay_category_map WHERE match_type = 'keyword';
+WITH rules(word, cat, priority) AS (
+  VALUES
+    ('dog', 'pet-food-treats', 100),
+    ('cat food', 'pet-food-treats', 100),
+    ('kitten', 'pet-food-treats', 90),
+    ('puppy', 'pet-food-treats', 90),
+    ('pet', 'pet-food-treats', 60),
+    ('board game', 'toys-games', 100),
+    ('jigsaw', 'toys-games', 90),
+    ('puzzle', 'toys-games', 80),
+    ('lego', 'toys-games', 90),
+    ('toy', 'toys-games', 60),
+    ('coffee', 'coffee-tea', 100),
+    ('tea bags', 'coffee-tea', 100),
+    ('espresso', 'coffee-tea', 90),
+    ('shampoo', 'hair-beauty', 100),
+    ('conditioner', 'hair-beauty', 90),
+    ('razor', 'hair-beauty', 90),
+    ('moisturiser', 'hair-beauty', 90),
+    ('shower gel', 'hair-beauty', 90),
+    ('perfume', 'hair-beauty', 80),
+    ('crisps', 'snacks-sweets', 100),
+    ('chocolate', 'snacks-sweets', 100),
+    ('sweets', 'snacks-sweets', 100),
+    ('haribo', 'snacks-sweets', 90),
+    ('drill', 'diy-tools', 100),
+    ('screwdriver', 'diy-tools', 90),
+    ('tool', 'diy-tools', 60),
+    ('paint', 'diy-tools', 70),
+    ('cereal bar', 'breakfast-bars', 100),
+    ('porridge', 'breakfast-bars', 90),
+    ('cereal', 'breakfast-bars', 80),
+    ('granola', 'breakfast-bars', 90),
+    ('kettle', 'household-appliances', 100),
+    ('toaster', 'household-appliances', 100),
+    ('air fryer', 'household-appliances', 100),
+    ('vacuum', 'household-appliances', 90),
+    ('garden', 'garden', 100),
+    ('plant', 'garden', 80),
+    ('seeds', 'garden', 90),
+    ('hose', 'garden', 80)
+)
 INSERT INTO ebay_category_map (match_type, match_value, category_id, priority)
-SELECT 'keyword', k.word, c.id, k.priority
-FROM (
-  SELECT 'dog' AS word, 'pet-food-treats' AS cat, 100 AS priority UNION ALL
-  SELECT 'cat food', 'pet-food-treats', 100 UNION ALL
-  SELECT 'kitten', 'pet-food-treats', 90 UNION ALL
-  SELECT 'puppy', 'pet-food-treats', 90 UNION ALL
-  SELECT 'pet', 'pet-food-treats', 60 UNION ALL
-  SELECT 'board game', 'toys-games', 100 UNION ALL
-  SELECT 'jigsaw', 'toys-games', 90 UNION ALL
-  SELECT 'puzzle', 'toys-games', 80 UNION ALL
-  SELECT 'lego', 'toys-games', 90 UNION ALL
-  SELECT 'toy', 'toys-games', 60 UNION ALL
-  SELECT 'coffee', 'coffee-tea', 100 UNION ALL
-  SELECT 'tea bags', 'coffee-tea', 100 UNION ALL
-  SELECT 'espresso', 'coffee-tea', 90 UNION ALL
-  SELECT 'shampoo', 'hair-beauty', 100 UNION ALL
-  SELECT 'conditioner', 'hair-beauty', 90 UNION ALL
-  SELECT 'razor', 'hair-beauty', 90 UNION ALL
-  SELECT 'moisturiser', 'hair-beauty', 90 UNION ALL
-  SELECT 'shower gel', 'hair-beauty', 90 UNION ALL
-  SELECT 'perfume', 'hair-beauty', 80 UNION ALL
-  SELECT 'crisps', 'snacks-sweets', 100 UNION ALL
-  SELECT 'chocolate', 'snacks-sweets', 100 UNION ALL
-  SELECT 'sweets', 'snacks-sweets', 100 UNION ALL
-  SELECT 'haribo', 'snacks-sweets', 90 UNION ALL
-  SELECT 'drill', 'diy-tools', 100 UNION ALL
-  SELECT 'screwdriver', 'diy-tools', 90 UNION ALL
-  SELECT 'tool', 'diy-tools', 60 UNION ALL
-  SELECT 'paint', 'diy-tools', 70 UNION ALL
-  SELECT 'cereal bar', 'breakfast-bars', 100 UNION ALL
-  SELECT 'porridge', 'breakfast-bars', 90 UNION ALL
-  SELECT 'cereal', 'breakfast-bars', 80 UNION ALL
-  SELECT 'granola', 'breakfast-bars', 90 UNION ALL
-  SELECT 'kettle', 'household-appliances', 100 UNION ALL
-  SELECT 'toaster', 'household-appliances', 100 UNION ALL
-  SELECT 'air fryer', 'household-appliances', 100 UNION ALL
-  SELECT 'vacuum', 'household-appliances', 90 UNION ALL
-  SELECT 'garden', 'garden', 100 UNION ALL
-  SELECT 'plant', 'garden', 80 UNION ALL
-  SELECT 'seeds', 'garden', 90 UNION ALL
-  SELECT 'hose', 'garden', 80
-) AS k
-JOIN categories c ON c.slug = k.cat;
+SELECT 'keyword', rules.word, c.id, rules.priority
+FROM rules
+JOIN categories c ON c.slug = rules.cat;

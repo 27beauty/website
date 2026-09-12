@@ -12,8 +12,8 @@
     "test:watch": "vitest",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
-    "db:seed:local": "wrangler d1 execute DB --local --file=./migrations/seed.sql",
-    "db:seed:remote": "wrangler d1 execute DB --remote --file=./migrations/seed.sql",
+    "db:seed:local": "wrangler d1 execute DB --local --file=./db/seed.sql",
+    "db:seed:remote": "wrangler d1 execute DB --remote --file=./db/seed.sql",
     "admin:hash": "node scripts/hash-password.mjs",
     "check": "npm run typecheck && npm run test"
   },

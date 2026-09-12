@@ -70,7 +70,7 @@ src/routes/checkout.tsx    checkout + Stripe Checkout session + success page
 src/routes/webhooks.ts     Stripe webhook (raw body — keep it first in index)
 src/routes/api.ts          health, sync trigger, JSON feeds
 src/routes/admin/          admin panel routes
-migrations/              D1 schema (0001_init.sql) + seed.sql
+migrations/              D1 schema (0001_init.sql)
 ```
 
 ## Environment
