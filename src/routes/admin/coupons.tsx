@@ -39,6 +39,19 @@ coupons.get('/', async (c) => {
   // Group single-use batches so the print sheet link isn't repeated per row.
   const batches = new Set(rows.filter((r) => r.batch).map((r) => r.batch as string));
 
+  // Titles for item-scoped codes, so the list reads "10% off Yorkshire Tea"
+  // rather than an opaque product id.
+  const productTitles = new Map<number, string>();
+  const scopedIds = [...new Set(rows.map((r) => r.product_id).filter((id): id is number => !!id))];
+  if (scopedIds.length) {
+    const { results: titles } = await c.env.DB.prepare(
+      `SELECT id, title FROM products WHERE id IN (${scopedIds.map(() => '?').join(',')})`,
+    )
+      .bind(...scopedIds)
+      .all<{ id: number; title: string }>();
+    for (const row of titles ?? []) productTitles.set(row.id, row.title);
+  }
+
   return c.html(
     <AdminLayout title="Coupons" active="coupons" admin={admin} msg={flash.msg} err={flash.err}>
       <div class="admin-head">
@@ -110,7 +123,8 @@ coupons.get('/', async (c) => {
             <tr>
               <th>Code</th>
               <th>Value</th>
-              <th>Batch</th>
+              <th>Applies to</th>
+              <th class="col-optional">Batch</th>
               <th class="num">Used</th>
               <th>Expiry</th>
               <th>Status</th>
@@ -126,7 +140,16 @@ coupons.get('/', async (c) => {
                     <a href={`/admin/coupons/${coupon.id}`}>{formatCouponCode(coupon.code)}</a>
                   </td>
                   <td>{valueLabel(coupon)}</td>
-                  <td class="faint">{coupon.batch ?? '—'}</td>
+                  <td>
+                    {coupon.product_id ? (
+                      <a href={`/admin/products/${coupon.product_id}`}>
+                        {productTitles.get(coupon.product_id) ?? `Item #${coupon.product_id}`}
+                      </a>
+                    ) : (
+                      <span class="faint">Whole basket</span>
+                    )}
+                  </td>
+                  <td class="faint col-optional">{coupon.batch ?? '—'}</td>
                   <td class="num">
                     {coupon.times_used}
                     {coupon.max_redemptions !== null ? ` / ${coupon.max_redemptions}` : ''}
@@ -178,9 +201,16 @@ interface CouponFormValues {
   starts_at: string;
   expires_at: string;
   batch: string;
+  product_id: string;
 }
 
-function CouponForm(props: { admin: { csrf: string }; values: CouponFormValues; action: string; heading: string }) {
+function CouponForm(props: {
+  admin: { csrf: string };
+  values: CouponFormValues;
+  action: string;
+  heading: string;
+  products?: Array<{ id: number; title: string }>;
+}) {
   const v = props.values;
   return (
     <div class="admin-panel">
@@ -196,6 +226,24 @@ function CouponForm(props: { admin: { csrf: string }; values: CouponFormValues; 
             <label for="batch">Batch label (optional)</label>
             <input id="batch" name="batch" type="text" value={v.batch} />
           </div>
+        </div>
+        <div class="field">
+          <label for="product_id">Applies to</label>
+          <select id="product_id" name="product_id">
+            <option value="" selected={!v.product_id}>
+              Everything in the basket
+            </option>
+            {(props.products ?? []).map((p) => (
+              <option value={String(p.id)} selected={v.product_id === String(p.id)}>
+                {p.title}
+              </option>
+            ))}
+          </select>
+          <p class="field-hint">
+            Pick one item to make this a single-item offer — the discount then comes off that item
+            only. To make a QR card for an item quickly, open the product and press
+            <strong> Create QR code</strong>.
+          </p>
         </div>
         <div class="admin-grid cols-3">
           <div class="field">
@@ -268,11 +316,21 @@ function blankCouponForm(): CouponFormValues {
     starts_at: '',
     expires_at: '',
     batch: '',
+    product_id: '',
   };
+}
+
+/** Products offered in the "applies to" selector. */
+async function selectableProducts(env: AppBindings['Bindings']): Promise<Array<{ id: number; title: string }>> {
+  const { results } = await env.DB.prepare(
+    "SELECT id, title FROM products WHERE status != 'archived' ORDER BY title ASC LIMIT 500",
+  ).all<{ id: number; title: string }>();
+  return results ?? [];
 }
 
 coupons.get('/new', async (c) => {
   const admin = getAdmin(c);
+  const products = await selectableProducts(c.env);
   return c.html(
     <AdminLayout title="New coupon" active="coupons" admin={admin}>
       <div class="admin-head">
@@ -281,7 +339,13 @@ coupons.get('/new', async (c) => {
           ← Back to coupons
         </a>
       </div>
-      <CouponForm admin={admin} values={blankCouponForm()} action="/admin/coupons/new" heading="New coupon" />
+      <CouponForm
+        admin={admin}
+        values={blankCouponForm()}
+        action="/admin/coupons/new"
+        heading="New coupon"
+        products={products}
+      />
     </AdminLayout>,
   );
 });
@@ -318,8 +382,8 @@ coupons.post('/new', async (c) => {
   try {
     await c.env.DB.prepare(
       `INSERT INTO coupons (code, kind, value, description, min_spend_pence, max_redemptions, per_customer_limit,
-        free_shipping, starts_at, expires_at, batch)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        free_shipping, starts_at, expires_at, batch, product_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
       .bind(
         code,
@@ -333,6 +397,7 @@ coupons.post('/new', async (c) => {
         str('starts_at') || null,
         str('expires_at') || null,
         str('batch') || null,
+        parseOptionalPositiveInt(str('product_id')),
       )
       .run();
   } catch {
@@ -460,6 +525,7 @@ coupons.get('/:id', async (c) => {
     starts_at: coupon.starts_at ?? '',
     expires_at: coupon.expires_at ?? '',
     batch: coupon.batch ?? '',
+    product_id: coupon.product_id !== null ? String(coupon.product_id) : '',
   };
   const flash = flashOf(c);
   return c.html(
@@ -480,7 +546,13 @@ coupons.get('/:id', async (c) => {
           </a>
         </div>
       </div>
-      <CouponForm admin={admin} values={values} action={`/admin/coupons/${coupon.id}`} heading={`Edit — ${coupon.code}`} />
+      <CouponForm
+        admin={admin}
+        values={values}
+        action={`/admin/coupons/${coupon.id}`}
+        heading={`Edit — ${formatCouponCode(coupon.code)}`}
+        products={await selectableProducts(c.env)}
+      />
     </AdminLayout>,
   );
 });
@@ -501,7 +573,7 @@ coupons.post('/:id', async (c) => {
   const minSpend = parsePoundsOrPercent(str('min_spend') || '0', 'fixed') ?? 0;
   await c.env.DB.prepare(
     `UPDATE coupons SET code=?, kind=?, value=?, description=?, min_spend_pence=?, max_redemptions=?,
-       per_customer_limit=?, free_shipping=?, starts_at=?, expires_at=?, batch=? WHERE id=?`,
+       per_customer_limit=?, free_shipping=?, starts_at=?, expires_at=?, batch=?, product_id=? WHERE id=?`,
   )
     .bind(
       code,
@@ -515,6 +587,7 @@ coupons.post('/:id', async (c) => {
       str('starts_at') || null,
       str('expires_at') || null,
       str('batch') || null,
+      parseOptionalPositiveInt(str('product_id')),
       id,
     )
     .run();

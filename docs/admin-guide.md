@@ -70,6 +70,11 @@ money in Stripe, which is deliberate: only Stripe can move money.
 
 - `QR10` is set up already: 10% off, unlimited use. It is the code on your
   standard card.
+- **A QR for one specific item** — open the product, scroll to *QR discount for
+  this item*, pick a percentage and press **Create QR code**. You get a readable
+  code (`10OFFYORKSHIRETEA`) whose discount applies to that item only, and a card
+  that lands the customer straight on it. Best used when you know what the
+  customer bought: put a cat-treat card in a cat-treat parcel.
 - **Generate batch** creates a run of single-use codes (say 100 for a print run)
   that each work exactly once, so you can tell which cards converted.
 - **Print** lays a batch out as cards on A4, ready to guillotine and drop into

@@ -27,6 +27,32 @@ Practical notes:
 - Leave the white border alone — it is the "quiet zone" the scanner needs.
 - Always test-scan one card from each print run before stuffing parcels.
 
+## Three kinds of card
+
+| | What it is | Make it |
+| --- | --- | --- |
+| **Shop-wide** (`QR10`) | 10% off anything in the basket | Already set up |
+| **Per item** | 10% off one specific product, e.g. `10OFFYORKSHIRETEA` | Open the product → **Create QR code** |
+| **Single-use batch** | A run of codes that each work once | Coupons → **Generate batch** |
+
+### Per-item cards — the sharpest tool here
+
+Open any product in the admin panel and scroll to **QR discount for this item**.
+Choose a percentage (10% by default), optionally an expiry and whether it can be
+used once, then press **Create QR code**. You get:
+
+- a readable code that says what it is — `10OFFYORKSHIRETEA`, not `27B-K7XQ`
+- a QR that lands the customer on **that product**, price already discounted
+- Print and Poster views for the card
+
+The discount comes off that item only. If someone puts the code in with the
+wrong basket, the site tells them which item it is for rather than just
+refusing it.
+
+Use these when you know what the customer bought. Someone who bought cat treats
+on the marketplace gets a card for cat treats — a far better hit rate than a
+generic 10% card, and you keep control of which margins you discount.
+
 ## One shared code, or one code per card?
 
 | | Shared code (`QR10`) | Single-use batch |

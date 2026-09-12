@@ -49,6 +49,11 @@ npm run db:seed:local      # categories, settings, QR10 coupon
 - Types come from `src/types.ts`. Extend that file rather than redeclaring rows.
 - Prices, stock and product content that the owner has edited are protected from
   the eBay sync by the `price_locked`, `stock_locked` and `content_locked` flags.
+- **Coupon codes are stored canonical** — uppercase letters and digits only.
+  `normaliseCouponCode` strips punctuation before every lookup, so a stored code
+  containing a dash can never be found again. Use `formatCouponCode` to render.
+- A coupon with `product_id` set discounts only that product's basket lines;
+  `eligiblePence` decides what a coupon may discount.
 
 ## Module map
 
@@ -70,7 +75,9 @@ src/routes/checkout.tsx    checkout + Stripe Checkout session + success page
 src/routes/webhooks.ts     Stripe webhook (raw body — keep it first in index)
 src/routes/api.ts          health, sync trigger, JSON feeds
 src/routes/admin/          admin panel routes
-migrations/              D1 schema (0001_init.sql)
+src/lib/qr.ts            QR SVG rendering + coupon code generation
+migrations/              D1 schema (0001_init.sql, 0002_product_coupons.sql)
+db/                      seed.sql (reference data) + demo-products.sql
 ```
 
 ## Environment

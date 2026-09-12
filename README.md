@@ -19,7 +19,7 @@ monthly floor cost.
 | **Checkout** | Stripe Checkout (hosted card page), UK shipping address collection, flat-rate delivery with a free-delivery threshold |
 | **Admin panel** | `/admin` — products, stock, categories, orders, coupons, settings, CSV import/export, image uploads |
 | **eBay sync** | Pulls listings from both eBay accounts every 30 minutes: new listings, price and quantity changes, with per-field locks so your manual edits win |
-| **QR coupons** | Generate single-use or shared codes, print a sheet of QR cards for parcels, and a dedicated `/qr/<CODE>` landing page that applies the discount |
+| **QR coupons** | Shop-wide, **per-item** and single-use codes; printable QR card sheets for parcels; a `/qr/<CODE>` landing page that applies the discount and features the item it belongs to |
 
 ## Stack
 
@@ -105,8 +105,10 @@ nameservers; the certificate is issued automatically.
 
 ## How the QR discount works
 
-1. In the admin panel, open **Coupons**. `QR10` (10% off) exists out of the box;
-   you can also generate a batch of single-use codes.
+1. In the admin panel, open **Coupons**. `QR10` (10% off everything) exists out of
+   the box. You can also generate single-use batches, or — the sharper move —
+   open any product and press **Create QR code** to get a readable, item-specific
+   code like `10OFFYORKSHIRETEA` that discounts just that product.
 2. Print the card sheet (**Coupons → Print**) and slip one into every parcel.
 3. The card's QR points at `https://27beauty.co.uk/qr/QR10`.
 4. Scanning it opens the landing page, stores the code in the visitor's basket
