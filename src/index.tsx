@@ -42,6 +42,22 @@ app.use('*', async (c, next) => {
   await next();
 });
 
+/**
+ * Product images uploaded through the admin panel live in R2 and are served
+ * from here so the storefront can link to them directly.
+ */
+app.get('/media/*', async (c) => {
+  const key = decodeURIComponent(new URL(c.req.url).pathname.replace(/^\/media\//, ''));
+  if (!key || key.includes('..')) return c.notFound();
+  const object = await c.env.MEDIA.get(key);
+  if (!object) return c.notFound();
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('etag', object.httpEtag);
+  headers.set('cache-control', 'public, max-age=31536000, immutable');
+  return new Response(object.body, { headers });
+});
+
 app.route('/', webhooks); // must stay before body-parsing routes
 app.route('/', storefront);
 app.route('/', checkout);
