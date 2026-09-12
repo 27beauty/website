@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { parseCouponBoundary, validateCoupon } from '../src/lib/coupons';
-import type { Coupon, Env } from '../src/types';
+import { eligiblePence, parseCouponBoundary, validateCoupon } from '../src/lib/coupons';
+import type { CartItem, Coupon, Env, Product } from '../src/types';
 
 /**
  * A fake D1 that answers only the two queries `validateCoupon` issues. It is
@@ -24,6 +24,9 @@ function fakeEnv(coupon: Coupon | null, redemptionsForEmail = 0): Env {
           if (sql.includes('FROM coupon_redemptions')) {
             return { n: redemptionsForEmail } as T;
           }
+          if (sql.includes('title FROM products')) {
+            return { title: 'Yorkshire Tea 240 Bags' } as T;
+          }
           throw new Error(`Unexpected SQL in test: ${sql}`);
         },
       };
@@ -36,12 +39,22 @@ function fakeEnv(coupon: Coupon | null, redemptionsForEmail = 0): Env {
 const iso = (offsetDays: number) =>
   new Date(Date.now() + offsetDays * 86_400_000).toISOString().replace('T', ' ').slice(0, 19);
 
+const product = (id: number, pricePence: number): Product =>
+  ({ id, title: `Product ${id}`, price_pence: pricePence, stock: 10, status: 'active' } as Product);
+
+const item = (id: number, pricePence: number, quantity: number): CartItem => ({
+  product: product(id, pricePence),
+  quantity,
+  lineTotalPence: pricePence * quantity,
+});
+
 const coupon = (over: Partial<Coupon> = {}): Coupon => ({
   id: 1,
   code: 'QR10',
   kind: 'percent',
   value: 10,
   description: null,
+  product_id: null,
   min_spend_pence: 0,
   max_redemptions: null,
   times_used: 0,
@@ -176,5 +189,48 @@ describe('validateCoupon', () => {
     const res = await validateCoupon(fakeEnv(coupon()), null, 2000);
     expect(res.coupon).toBeNull();
     expect(res.error).toBeUndefined();
+  });
+});
+
+
+describe('item-scoped coupons', () => {
+  const basket = [item(5, 899, 2), item(3, 1499, 1)]; // £17.98 tea + £14.99 game
+
+  it('prices a whole-basket coupon against everything', () => {
+    expect(eligiblePence(coupon(), 3297, basket)).toBe(3297);
+  });
+
+  it('prices an item coupon against that item only', () => {
+    expect(eligiblePence(coupon({ product_id: 5 }), 3297, basket)).toBe(1798);
+    expect(eligiblePence(coupon({ product_id: 3 }), 3297, basket)).toBe(1499);
+  });
+
+  it('gives nothing when the item is not in the basket', () => {
+    expect(eligiblePence(coupon({ product_id: 99 }), 3297, basket)).toBe(0);
+  });
+
+  it('discounts only the scoped item, not the whole basket', async () => {
+    const res = await validateCoupon(fakeEnv(coupon({ product_id: 5 })), 'QR10', 3297, null, {
+      items: basket,
+    });
+    expect(res.discountPence).toBe(180); // 10% of £17.98, not of £32.97
+    expect(res.productTitle).toBe('Yorkshire Tea 240 Bags');
+  });
+
+  it('names the item the customer still needs to add', async () => {
+    const res = await validateCoupon(fakeEnv(coupon({ product_id: 99 })), 'QR10', 1499, null, {
+      items: [item(3, 1499, 1)],
+    });
+    expect(res.coupon).toBeNull();
+    expect(res.error).toBe(
+      'This code is for Yorkshire Tea 240 Bags — add it to your basket to use the discount.',
+    );
+  });
+
+  it('still welcomes the customer on the QR landing page, where the basket is empty', async () => {
+    const res = await validateCoupon(fakeEnv(coupon({ product_id: 5 })), 'QR10', 0, null, {
+      ignoreMinSpend: true,
+    });
+    expect(res.coupon).not.toBeNull();
   });
 });

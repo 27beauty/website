@@ -378,22 +378,53 @@ orders.post('/:id/cancel', async (c) => {
   }
   const loaded = await loadOrder(c.env, id);
   if (!loaded) return c.text('Not found', 404);
-  // Restock only if stock was ever decremented for this order.
-  if (loaded.order.stock_applied) {
-    for (const item of loaded.items) {
-      if (item.product_id) {
-        await c.env.DB.prepare("UPDATE products SET stock = stock + ?, updated_at = datetime('now') WHERE id = ?")
-          .bind(item.quantity, item.product_id)
-          .run();
-      }
-    }
+
+  // A fulfilled order has already left the building — restocking it would
+  // invent stock that isn't on the shelf. Only pending/paid orders cancel.
+  if (loaded.order.status !== 'pending' && loaded.order.status !== 'paid') {
+    return c.redirect(
+      `/admin/orders/${id}?err=` +
+        encodeURIComponent(
+          `A ${loaded.order.status} order can't be cancelled. Refund it instead if the customer is owed money.`,
+        ),
+      303,
+    );
   }
-  await c.env.DB.prepare(
-    "UPDATE orders SET status = 'cancelled', stock_applied = 0, updated_at = datetime('now') WHERE id = ?",
+
+  // Claim the cancellation atomically: whichever request wins the guarded
+  // UPDATE is the one that restocks, so a double-tap cannot credit stock twice.
+  const claim = await c.env.DB.prepare(
+    `UPDATE orders
+        SET status = 'cancelled', stock_applied = 0, updated_at = datetime('now')
+      WHERE id = ? AND status IN ('pending', 'paid')`,
   )
     .bind(id)
     .run();
-  return c.redirect(`/admin/orders/${id}?msg=${encodeURIComponent('Order cancelled and stock restored.')}`, 303);
+
+  if ((claim.meta.changes ?? 0) === 0) {
+    return c.redirect(
+      `/admin/orders/${id}?msg=${encodeURIComponent('That order was already cancelled.')}`,
+      303,
+    );
+  }
+
+  if (loaded.order.stock_applied) {
+    const restocks = loaded.items
+      .filter((item) => item.product_id)
+      .map((item) =>
+        c.env.DB.prepare(
+          "UPDATE products SET stock = stock + ?, updated_at = datetime('now') WHERE id = ?",
+        ).bind(item.quantity, item.product_id),
+      );
+    if (restocks.length) await c.env.DB.batch(restocks);
+  }
+
+  return c.redirect(
+    `/admin/orders/${id}?msg=${encodeURIComponent(
+      loaded.order.stock_applied ? 'Order cancelled and stock restored.' : 'Order cancelled.',
+    )}`,
+    303,
+  );
 });
 
 orders.post('/:id/note', async (c) => {

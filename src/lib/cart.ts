@@ -110,7 +110,7 @@ export async function buildCart(
   const subtotalPence = items.reduce((sum, i) => sum + i.lineTotalPence, 0);
   const itemCount = items.reduce((sum, i) => sum + i.quantity, 0);
 
-  const check = await validateCoupon(env, couponCode, subtotalPence, email);
+  const check = await validateCoupon(env, couponCode, subtotalPence, email, { items });
   const discountPence = check.discountPence;
 
   const { flatPence, freeThresholdPence } = await getShippingConfig(env);

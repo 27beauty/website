@@ -46,6 +46,27 @@ export function generateCouponCode(prefix = '27B'): string {
   return `${prefix}${randomCode(4)}`;
 }
 
+/**
+ * A deliberate, readable code for a single product — "10OFFYORKSHIRETEA"
+ * rather than a random block, so the owner (and the customer) can see at a
+ * glance what the card is for. Canonical form: uppercase letters and digits.
+ */
+export function productCouponCode(percent: number, productTitle: string, suffix = 0): string {
+  const words = productTitle
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  let stem = '';
+  for (const word of words) {
+    if (stem.length >= 12) break;
+    stem += word;
+  }
+  stem = stem.slice(0, 14) || randomCode(4);
+  const base = `${Math.round(percent)}OFF${stem}`;
+  return suffix > 0 ? `${base}${suffix + 1}` : base;
+}
+
 /** Print/display form of a stored code: "27BK7XQ" reads as "27B-K7XQ". */
 export function formatCouponCode(code: string, prefix = '27B'): string {
   return code.startsWith(prefix) && code.length > prefix.length

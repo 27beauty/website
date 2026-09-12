@@ -21,6 +21,7 @@ const coupon = (over: Partial<Coupon> = {}): Coupon => ({
   kind: 'percent',
   value: 10,
   description: null,
+  product_id: null,
   min_spend_pence: 0,
   max_redemptions: null,
   times_used: 0,

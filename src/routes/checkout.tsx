@@ -4,6 +4,7 @@ import type { AppBindings, CartTotals } from '../types';
 import { buildCart, clearCart, readCartLines, readCouponCode } from '../lib/cart';
 import { listCategories } from '../lib/db';
 import { isEmail } from '../lib/util';
+import { getSetting } from '../lib/settings';
 import { formatPence } from '../lib/money';
 import {
   attachStripeSession,
@@ -136,7 +137,42 @@ async function renderCheckoutPage(
   );
 }
 
+/**
+ * The owner can close the till from Settings (stock-take, holiday, a pricing
+ * fix). Both the review page and the pay button honour it — a switch that does
+ * nothing is worse than no switch.
+ */
+async function checkoutClosed(c: Context<AppBindings>): Promise<Response | null> {
+  const enabled = await getSetting<boolean>(c.env, 'checkout.enabled', true);
+  if (enabled) return null;
+  const categories = await listCategories(c.env).catch(() => []);
+  return c.html(
+    <Layout
+      title="Checkout paused"
+      categories={categories}
+      cartCount={c.get('cartCount')}
+      noindex
+    >
+      <div class="empty">
+        <span class="emoji">🛠️</span>
+        <h1>We've paused checkout</h1>
+        <p class="muted">
+          We're updating the shop and can't take orders for a moment. Your basket is saved — please
+          try again shortly, or email hello@27beauty.co.uk if you need something urgently.
+        </p>
+        <a class="btn" href="/cart">
+          Back to your basket
+        </a>
+      </div>
+    </Layout>,
+    503,
+  );
+}
+
 checkout.get('/checkout', async (c) => {
+  const closed = await checkoutClosed(c);
+  if (closed) return closed;
+
   const lines = await readCartLines(c);
   const couponCode = readCouponCode(c);
   const cart = await buildCart(c.env, lines, couponCode);
@@ -147,6 +183,9 @@ checkout.get('/checkout', async (c) => {
 });
 
 checkout.post('/checkout/session', async (c) => {
+  const closed = await checkoutClosed(c);
+  if (closed) return closed;
+
   const env = c.env;
   const form = await c.req.parseBody();
   const email = String(form.email ?? '').trim();

@@ -162,34 +162,48 @@ interface LoginAttempts {
   count: number;
 }
 
-/** True once an IP has failed 10 logins inside the current 15-minute window. */
-export async function isLoginRateLimited(env: Env, ip: string): Promise<boolean> {
-  const raw = await env.KV.get(loginFailKey(ip));
-  if (!raw) return false;
+/**
+ * Failed logins are counted twice: once per source IP, and once per email
+ * address. The per-IP count stops one machine grinding away; the per-email
+ * count stops a spread-out attempt on the owner's account, where every request
+ * arrives from a different address and would otherwise get its own budget.
+ */
+function loginFailKeys(ip: string, email?: string | null): string[] {
+  const keys = [loginFailKey(ip)];
+  const normalised = email?.trim().toLowerCase();
+  if (normalised) keys.push(loginFailKey(`email:${normalised}`));
+  return keys;
+}
+
+async function attemptCount(env: Env, key: string): Promise<number> {
+  const raw = await env.KV.get(key);
+  if (!raw) return 0;
   try {
-    return ((JSON.parse(raw) as LoginAttempts).count ?? 0) >= LOGIN_MAX_ATTEMPTS;
+    return (JSON.parse(raw) as LoginAttempts).count ?? 0;
   } catch {
-    return false;
+    return 0;
   }
 }
 
-export async function recordLoginFailure(env: Env, ip: string): Promise<void> {
-  const raw = await env.KV.get(loginFailKey(ip));
-  let count = 1;
-  if (raw) {
-    try {
-      count = ((JSON.parse(raw) as LoginAttempts).count ?? 0) + 1;
-    } catch {
-      count = 1;
-    }
-  }
-  await env.KV.put(loginFailKey(ip), JSON.stringify({ count } satisfies LoginAttempts), {
-    expirationTtl: LOGIN_WINDOW_SECONDS,
-  });
+/** True once this IP *or* this email has failed 10 logins in the last 15 minutes. */
+export async function isLoginRateLimited(env: Env, ip: string, email?: string | null): Promise<boolean> {
+  const counts = await Promise.all(loginFailKeys(ip, email).map((key) => attemptCount(env, key)));
+  return counts.some((count) => count >= LOGIN_MAX_ATTEMPTS);
 }
 
-export async function clearLoginFailures(env: Env, ip: string): Promise<void> {
-  await env.KV.delete(loginFailKey(ip));
+export async function recordLoginFailure(env: Env, ip: string, email?: string | null): Promise<void> {
+  await Promise.all(
+    loginFailKeys(ip, email).map(async (key) => {
+      const count = (await attemptCount(env, key)) + 1;
+      await env.KV.put(key, JSON.stringify({ count } satisfies LoginAttempts), {
+        expirationTtl: LOGIN_WINDOW_SECONDS,
+      });
+    }),
+  );
+}
+
+export async function clearLoginFailures(env: Env, ip: string, email?: string | null): Promise<void> {
+  await Promise.all(loginFailKeys(ip, email).map((key) => env.KV.delete(key)));
 }
 
 /** Shared rule for both /setup and the change-password form. */

@@ -101,6 +101,8 @@ export interface Coupon {
   kind: CouponKind;
   value: number;
   description: string | null;
+  /** When set, the discount applies only to this product's basket lines. */
+  product_id: number | null;
   min_spend_pence: number;
   max_redemptions: number | null;
   times_used: number;

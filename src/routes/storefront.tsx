@@ -795,7 +795,25 @@ async function qrLanding(c: Context<AppBindings>, codeRaw: string) {
       ? `${coupon.value}% off`
       : `${formatPence(coupon.value)} off`
     : null;
-  const heading = offer ? `🎉 Here's your ${offer}` : 'Welcome to 27beauty';
+
+  // An item-scoped card should land on that item, not on a generic welcome.
+  const scopedProduct = coupon?.product_id ? await getProductById(c.env, coupon.product_id) : null;
+  const discountedPence =
+    coupon && scopedProduct
+      ? Math.max(
+          scopedProduct.price_pence -
+            (coupon.kind === 'percent'
+              ? Math.round((scopedProduct.price_pence * Math.min(coupon.value, 100)) / 100)
+              : coupon.value),
+          0,
+        )
+      : null;
+
+  const heading = offer
+    ? scopedProduct
+      ? `🎉 ${offer} ${scopedProduct.title}`
+      : `🎉 Here's your ${offer}`
+    : 'Welcome to 27beauty';
 
   return c.html(
     <Layout
@@ -826,12 +844,48 @@ async function qrLanding(c: Context<AppBindings>, codeRaw: string) {
         {coupon?.expires_at ? (
           <p class="small">Valid until {coupon.expires_at.slice(0, 10)}.</p>
         ) : null}
-        <a class="btn btn-accent" href="/shop">
-          Start shopping
+        <a class="btn btn-accent" href={scopedProduct ? `/product/${scopedProduct.slug}` : '/shop'}>
+          {scopedProduct ? 'See the offer' : 'Start shopping'}
         </a>
       </section>
 
       {notice ? <Notice kind={notice.kind}>{notice.message}</Notice> : null}
+
+      {scopedProduct && discountedPence !== null ? (
+        <section class="panel qr-offer" style="margin-top:20px">
+          <div class="qr-offer-media">
+            {scopedProduct.image_url ? (
+              <img src={scopedProduct.image_url} alt={scopedProduct.title} />
+            ) : (
+              <ImagePlaceholder />
+            )}
+          </div>
+          <div class="qr-offer-body">
+            <h2>{scopedProduct.title}</h2>
+            <div class="price-row">
+              <span class="price price-lg">{formatPence(discountedPence)}</span>
+              <span class="price-was">{formatPence(scopedProduct.price_pence)}</span>
+              <span class="pill pill-ok">{offer} with your card</span>
+            </div>
+            {scopedProduct.stock > 0 ? (
+              <form method="post" action="/cart/add" class="qty-row">
+                <input type="hidden" name="product_id" value={String(scopedProduct.id)} />
+                <input type="hidden" name="quantity" value="1" />
+                <button class="btn btn-accent" type="submit">
+                  Add to basket
+                </button>
+                <a class="btn btn-secondary" href={`/product/${scopedProduct.slug}`}>
+                  View item
+                </a>
+              </form>
+            ) : (
+              <p class="muted">
+                Sold out just now — your code still works on it when it's back, or browse below.
+              </p>
+            )}
+          </div>
+        </section>
+      ) : null}
 
       <ul class="trust-list" style="margin-top:20px">
         {TRUST_POINTS.map((point) => (

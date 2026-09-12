@@ -1,10 +1,10 @@
 import type { FC, PropsWithChildren } from 'hono/jsx';
 
 /**
- * The admin shell: compact top bar + horizontally-scrolling section nav that
- * becomes a sidebar at desktop widths. Admin pages use this instead of
- * src/ui/layout.tsx. Genuinely usable on a phone — the owner updates stock
- * standing in a stockroom.
+ * The admin shell: compact top bar + a section nav that is a thumb-reachable
+ * bottom tab bar on a phone and a sidebar at desktop widths. Admin pages use
+ * this instead of src/ui/layout.tsx. Genuinely usable one-handed — the owner
+ * updates stock standing in a stockroom, packs orders at a kitchen table.
  */
 
 export type AdminSection = 'dashboard' | 'products' | 'orders' | 'coupons' | 'settings';
@@ -30,6 +30,38 @@ const NAV: Array<{ id: AdminSection; label: string; href: string }> = [
 /** Hidden CSRF field for every admin POST form. */
 export const CsrfField: FC<{ token: string | undefined }> = ({ token }) => (
   <input type="hidden" name="_csrf" value={token ?? ''} />
+);
+
+/**
+ * One flash message with a CSS-only dismiss (a visually-hidden checkbox +
+ * label — no JavaScript). `kind` picks the colour + icon; the text label
+ * always states the state too, so nothing here relies on colour alone.
+ */
+const Flash: FC<{ id: string; kind: 'ok' | 'bad'; text: string }> = ({ id, kind, text }) => (
+  <div class="admin-flash">
+    <input type="checkbox" id={id} class="flash-toggle" />
+    <div class={`notice notice-${kind} flash-notice`}>
+      <span class="flash-icon" aria-hidden="true">
+        {kind === 'ok' ? '✓' : '!'}
+      </span>
+      <span class="flash-text">{text}</span>
+      <label for={id} class="flash-close" aria-label="Dismiss this message">
+        ×
+      </label>
+    </div>
+  </div>
+);
+
+/**
+ * Floating shortcut to the one job the owner does most: updating stock.
+ * Jumps straight into the products list sorted by lowest stock first, so the
+ * fields that need attention are the first ones on screen — no filtering by
+ * hand. Reuses the existing /admin/products query params; no new route.
+ */
+const StockShortcut: FC = () => (
+  <a class="stock-fab no-print" href="/admin/products?sort=stock_asc" aria-label="Jump to stock levels, lowest first">
+    <span aria-hidden="true">✎</span> Stock
+  </a>
 );
 
 export const AdminLayout: FC<PropsWithChildren<AdminLayoutProps>> = (props) => {

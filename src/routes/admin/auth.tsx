@@ -98,7 +98,7 @@ auth.post('/login', async (c) => {
     c.redirect(`/admin/login?err=${encodeURIComponent(message)}&next=${encodeURIComponent(next)}`, 303);
 
   if (!csrfOk) return fail('Your session expired — please try again.');
-  if (await isLoginRateLimited(c.env, ip)) {
+  if (await isLoginRateLimited(c.env, ip, email)) {
     return fail('Too many attempts. Please wait 15 minutes and try again.');
   }
   if (!email || !password) return fail('Enter your email and password.');
@@ -111,11 +111,11 @@ auth.post('/login', async (c) => {
 
   const ok = await verifyLoginPassword(password, user?.password_hash);
   if (!ok || !user) {
-    await recordLoginFailure(c.env, ip);
+    await recordLoginFailure(c.env, ip, email);
     return fail('Invalid email or password.');
   }
 
-  await clearLoginFailures(c.env, ip);
+  await clearLoginFailures(c.env, ip, email);
   await c.env.DB.prepare("UPDATE admin_users SET last_login_at = datetime('now') WHERE id = ?")
     .bind(user.id)
     .run();

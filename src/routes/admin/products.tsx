@@ -1,11 +1,13 @@
 import { Hono } from 'hono';
-import type { AppBindings, Category, Env, ProductStatus, ProductWithCategory } from '../../types';
+import type { AppBindings, Category, Coupon, Env, ProductStatus, ProductWithCategory } from '../../types';
 import { getProductById, listCategories } from '../../lib/db';
 import { getAdmin, verifyCsrf } from '../../lib/admin-auth';
 import { AdminLayout, CsrfField } from '../../ui/admin-layout';
 import { formatPence, penceToInput } from '../../lib/money';
 import { clampInt, parseJsonArray, poundsToPence, uniqueSlug } from '../../lib/util';
 import { randomToken } from '../../lib/crypto';
+import { couponQrUrl, formatCouponCode, productCouponCode, renderQrSvg } from '../../lib/qr';
+import { getSetting } from '../../lib/settings';
 
 /** Product catalogue: list, editor, image upload, CSV import/export.
  * Categories live in ./categories.tsx and the R2 media route in ./media.tsx —
@@ -833,6 +835,12 @@ products.get('/:id', async (c) => {
   if (!product) return c.text('Not found', 404);
   const cats = await listCategories(c.env);
   const flash = flashOf(c);
+  const [{ results: itemCoupons }, defaultPercent] = await Promise.all([
+    c.env.DB.prepare('SELECT * FROM coupons WHERE product_id = ? ORDER BY id DESC')
+      .bind(product.id)
+      .all<Coupon>(),
+    getSetting<number>(c.env, 'coupon.default_percent', 10),
+  ]);
   return c.html(
     <AdminLayout title={product.title} active="products" admin={admin} msg={flash.msg} err={flash.err}>
       <ProductEditor
@@ -843,7 +851,177 @@ products.get('/:id', async (c) => {
         action={`/admin/products/${product.id}`}
         heading={`Edit — ${product.title}`}
       />
+      <ProductQrPanel
+        admin={admin}
+        product={product}
+        coupons={itemCoupons ?? []}
+        defaultPercent={defaultPercent}
+        siteUrl={c.env.SITE_URL}
+      />
     </AdminLayout>,
+  );
+});
+
+
+/* ---------------------------------------------------------------------- */
+/* Per-item QR discounts                                                   */
+/* ---------------------------------------------------------------------- */
+
+/**
+ * "Make a QR code for this item." The owner picks a percentage, presses one
+ * button, and gets a printable card whose discount applies to this product
+ * only — no random codes to keep track of.
+ */
+function ProductQrPanel(props: {
+  admin: { csrf: string };
+  product: ProductWithCategory;
+  coupons: Coupon[];
+  defaultPercent: number;
+  siteUrl: string;
+}) {
+  const { product, coupons } = props;
+  return (
+    <section class="admin-panel" id="qr">
+      <h2>QR discount for this item</h2>
+      <p class="muted">
+        Creates a discount code that only applies to <strong>{product.title}</strong>, and a QR card
+        you can print and drop into parcels. Scanning it takes the customer straight to this product
+        with the discount already applied.
+      </p>
+
+      <form method="post" action={`/admin/products/${product.id}/qr`} class="qr-create-form">
+        <CsrfField token={props.admin.csrf} />
+        <div class="field">
+          <label for="percent">Discount</label>
+          <div class="input-suffix">
+            <input
+              id="percent"
+              name="percent"
+              type="number"
+              min="1"
+              max="90"
+              step="1"
+              value={String(props.defaultPercent)}
+              required
+            />
+            <span>% off</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="qr_expires">Expires (optional)</label>
+          <input id="qr_expires" name="expires_at" type="date" />
+          <p class="field-hint">Leave blank for a code that never expires.</p>
+        </div>
+        <div class="field">
+          <label class="check">
+            <input type="checkbox" name="single_use" value="1" />
+            <span>Single use — the card works once, then stops</span>
+          </label>
+        </div>
+        <button class="btn btn-accent" type="submit">
+          Create QR code
+        </button>
+      </form>
+
+      {coupons.length ? (
+        <div class="qr-existing">
+          <h3>Codes for this item</h3>
+          <div class="qr-card-list">
+            {coupons.map((coupon) => (
+              <div class="qr-card-mini">
+                <div
+                  class="qr-card-mini-img"
+                  dangerouslySetInnerHTML={{
+                    __html: renderQrSvg(couponQrUrl({ SITE_URL: props.siteUrl }, coupon.code), 150),
+                  }}
+                />
+                <div class="qr-card-mini-body">
+                  <strong>{formatCouponCode(coupon.code)}</strong>
+                  <p class="small muted">
+                    {coupon.kind === 'percent'
+                      ? `${coupon.value}% off`
+                      : `${formatPence(coupon.value)} off`}
+                    {coupon.max_redemptions === 1 ? ' · single use' : ''}
+                    {coupon.expires_at ? ` · until ${coupon.expires_at.slice(0, 10)}` : ''}
+                    {' · used '}
+                    {coupon.times_used}
+                    {coupon.max_redemptions ? `/${coupon.max_redemptions}` : ''}
+                    {coupon.active ? '' : ' · inactive'}
+                  </p>
+                  <div class="row">
+                    <a class="btn btn-sm btn-secondary" href={`/admin/coupons/print?batch=item-${product.id}`}>
+                      Print cards
+                    </a>
+                    <a class="btn btn-sm btn-secondary" href={`/admin/coupons/poster?code=${coupon.code}`}>
+                      Poster
+                    </a>
+                    <a class="btn btn-sm btn-secondary" href={`/admin/coupons/${coupon.id}`}>
+                      Edit
+                    </a>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/** Creates a product-scoped coupon and sends the owner straight to its card. */
+products.post('/:id/qr', async (c) => {
+  const id = Number(c.req.param('id'));
+  const body = await c.req.parseBody();
+  if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
+    return c.redirect('/admin/login', 303);
+  }
+
+  const product = await getProductById(c.env, id);
+  if (!product) return c.text('Not found', 404);
+
+  const percent = clampInt(body.percent, 1, 90, 10);
+  const expiresAt = typeof body.expires_at === 'string' && body.expires_at.trim() ? body.expires_at.trim() : null;
+  const singleUse = body.single_use === '1';
+
+  // Deliberate, readable code — retried with a suffix only if that exact code
+  // is already taken by another product.
+  let code = productCouponCode(percent, product.title);
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const clash = await c.env.DB.prepare('SELECT id, product_id FROM coupons WHERE code = ?')
+      .bind(code)
+      .first<{ id: number; product_id: number | null }>();
+    if (!clash) break;
+    if (clash.product_id === product.id) {
+      return c.redirect(
+        `/admin/coupons/${clash.id}?msg=` +
+          encodeURIComponent(`That code already exists for ${product.title}.`),
+        303,
+      );
+    }
+    code = productCouponCode(percent, product.title, attempt + 1);
+  }
+
+  const res = await c.env.DB.prepare(
+    `INSERT INTO coupons (code, kind, value, description, product_id, max_redemptions, expires_at, batch, active)
+     VALUES (?, 'percent', ?, ?, ?, ?, ?, ?, 1)`,
+  )
+    .bind(
+      code,
+      percent,
+      `${percent}% off ${product.title}`,
+      product.id,
+      singleUse ? 1 : null,
+      expiresAt,
+      `item-${product.id}`,
+    )
+    .run();
+
+  const couponId = Number(res.meta.last_row_id);
+  return c.redirect(
+    `/admin/coupons/${couponId}?msg=` +
+      encodeURIComponent(`QR code ${formatCouponCode(code)} created for ${product.title}.`),
+    303,
   );
 });
 

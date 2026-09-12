@@ -7,6 +7,7 @@ import {
   generateBatchCodes,
   formatCouponCode,
   generateCouponCode,
+  productCouponCode,
   randomCode,
   renderQrSvg,
 } from '../src/lib/qr';
@@ -116,6 +117,20 @@ describe('coupon code generation', () => {
       const code = generateCouponCode('27B');
       expect(normaliseCouponCode(code)).toBe(code);
       expect(normaliseCouponCode(formatCouponCode(code))).toBe(code);
+    }
+  });
+
+  it('builds a readable, deliberate code for one product', () => {
+    expect(productCouponCode(10, 'Yorkshire Tea 240 Bags')).toBe('10OFFYORKSHIRETEA');
+    expect(productCouponCode(15, 'Head & Shoulders Classic 500ml')).toBe('15OFFHEADSHOULDERS');
+    expect(productCouponCode(10, 'Yorkshire Tea 240 Bags', 1)).toBe('10OFFYORKSHIRETEA2');
+  });
+
+  it('keeps per-product codes safe to type and to look up', () => {
+    for (const title of ['Cadbury Dairy Milk 850g', 'Rubik\'s Cube 3x3', '   ', 'Nescafé Gold 200g']) {
+      const code = productCouponCode(10, title);
+      expect(code).toMatch(/^[A-Z0-9]+$/);
+      expect(normaliseCouponCode(code)).toBe(code);
     }
   });
 

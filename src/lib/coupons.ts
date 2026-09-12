@@ -1,4 +1,4 @@
-import type { Coupon, Env } from '../types';
+import type { CartItem, Coupon, Env } from '../types';
 import { normaliseCouponCode } from './util';
 
 /**
@@ -11,6 +11,21 @@ export interface CouponCheck {
   error?: string;
   discountPence: number;
   freeShipping: boolean;
+  /** Title of the product an item-scoped coupon applies to, for the UI. */
+  productTitle?: string;
+}
+
+/**
+ * The part of the basket a coupon may discount. A whole-basket coupon sees
+ * everything; a coupon tied to one product only sees that product's lines, so
+ * "10% off the Yorkshire Tea" never quietly discounts the kettle as well.
+ */
+export function eligiblePence(coupon: Coupon, subtotalPence: number, items?: CartItem[]): number {
+  if (!coupon.product_id) return subtotalPence;
+  if (!items) return 0;
+  return items
+    .filter((item) => item.product.id === coupon.product_id)
+    .reduce((sum, item) => sum + item.lineTotalPence, 0);
 }
 
 /**
@@ -56,6 +71,8 @@ export function computeDiscount(coupon: Coupon, subtotalPence: number): number {
 }
 
 export interface ValidateOptions {
+  /** The resolved basket, needed to price a coupon tied to one product. */
+  items?: CartItem[];
   /**
    * Skips the minimum-spend rule. Used by the QR landing page, where the
    * basket is still empty: the code is genuinely valid, the shopper simply has
@@ -94,6 +111,22 @@ export async function validateCoupon(
   if (coupon.max_redemptions !== null && coupon.times_used >= coupon.max_redemptions) {
     return { ...empty, error: 'That code has already been used.' };
   }
+  const eligible = eligiblePence(coupon, subtotalPence, options.items);
+
+  // An item-scoped code is valid, just not yet usable, until that item is in
+  // the basket — say which item rather than "not recognised".
+  if (coupon.product_id && eligible <= 0 && !options.ignoreMinSpend) {
+    const product = await env.DB.prepare('SELECT title FROM products WHERE id = ?')
+      .bind(coupon.product_id)
+      .first<{ title: string }>();
+    return {
+      ...empty,
+      error: product
+        ? `This code is for ${product.title} — add it to your basket to use the discount.`
+        : 'This code is for an item that is no longer available.',
+    };
+  }
+
   if (!options.ignoreMinSpend && subtotalPence < coupon.min_spend_pence) {
     return {
       ...empty,
@@ -111,16 +144,38 @@ export async function validateCoupon(
     }
   }
 
+  const productTitle = coupon.product_id
+    ? (
+        await env.DB.prepare('SELECT title FROM products WHERE id = ?')
+          .bind(coupon.product_id)
+          .first<{ title: string }>()
+      )?.title
+    : undefined;
+
   return {
     coupon,
-    discountPence: computeDiscount(coupon, subtotalPence),
+    discountPence: computeDiscount(coupon, eligible),
     freeShipping: coupon.free_shipping === 1,
+    productTitle,
   };
 }
 
+export interface RedemptionResult {
+  /** True when this call recorded a new redemption. */
+  recorded: boolean;
+  /** True when the code was already at its redemption limit — needs a human. */
+  overLimit: boolean;
+}
+
 /**
- * Records a redemption once an order is paid. Idempotent per (coupon, order):
- * the unique index means a replayed Stripe webhook cannot double-count.
+ * Records a redemption once an order is paid.
+ *
+ * Idempotent per (coupon, order): the unique index means a replayed Stripe
+ * webhook cannot double-count one order. The usage counter is incremented with
+ * the limit in the WHERE clause, so two customers paying at the same moment
+ * with the same single-use card cannot both slip past the cap — a shared or
+ * photographed QR card is exactly the threat here. The second one is reported
+ * back as `overLimit` so the order can be flagged rather than silently honoured.
  */
 export async function recordRedemption(
   env: Env,
@@ -128,18 +183,35 @@ export async function recordRedemption(
   orderId: number,
   email: string | null,
   amountPence: number,
-): Promise<boolean> {
+): Promise<RedemptionResult> {
+  const claim = await env.DB.prepare(
+    `UPDATE coupons
+        SET times_used = times_used + 1
+      WHERE id = ?
+        AND (max_redemptions IS NULL OR times_used < max_redemptions)`,
+  )
+    .bind(couponId)
+    .run();
+
+  if ((claim.meta.changes ?? 0) === 0) {
+    // Already at the cap. Record nothing, and tell the caller to flag it.
+    return { recorded: false, overLimit: true };
+  }
+
   const res = await env.DB.prepare(
     `INSERT OR IGNORE INTO coupon_redemptions (coupon_id, order_id, email, amount_pence)
      VALUES (?, ?, ?, ?)`,
   )
     .bind(couponId, orderId, email, amountPence)
     .run();
-  const inserted = (res.meta.changes ?? 0) > 0;
-  if (inserted) {
-    await env.DB.prepare('UPDATE coupons SET times_used = times_used + 1 WHERE id = ?')
+
+  if ((res.meta.changes ?? 0) === 0) {
+    // This order was already counted (a replayed webhook) — give the claim back.
+    await env.DB.prepare('UPDATE coupons SET times_used = MAX(0, times_used - 1) WHERE id = ?')
       .bind(couponId)
       .run();
+    return { recorded: false, overLimit: false };
   }
-  return inserted;
+
+  return { recorded: true, overLimit: false };
 }
