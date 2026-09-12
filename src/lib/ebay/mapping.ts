@@ -40,7 +40,12 @@ export function mapCategory(
   defaultCategoryId: number | null,
 ): number | null {
   const title = listing.title ?? '';
-  for (const rule of rules) {
+  // Sort defensively rather than trusting caller order — loadCategoryRules()
+  // already sorts by priority, but mapCategory is a pure function tested and
+  // reused on its own, so it must not depend on that. Array#sort is stable,
+  // so equal-priority rules keep their relative (table) order.
+  const ordered = [...rules].sort((a, b) => b.priority - a.priority);
+  for (const rule of ordered) {
     if (rule.matchType === 'keyword') {
       if (matchesKeyword(title, rule.matchValue)) return rule.categoryId;
     } else {

@@ -1,5 +1,80 @@
 import { Hono } from 'hono';
 import type { AppBindings } from '../types';
+import { secretsMatch } from '../lib/crypto';
+import { clampInt } from '../lib/util';
+import { runEbaySync } from '../lib/ebay/sync';
 
 /** Machine endpoints: eBay sync trigger, health check, product JSON feed. */
 export const api = new Hono<AppBindings>();
+
+const VERSION = '1.0.0';
+
+api.get('/health', (c) => {
+  return c.json({ ok: true, time: new Date().toISOString(), version: VERSION });
+});
+
+/**
+ * Triggers an eBay sync on demand (e.g. from an external scheduler, or the
+ * admin panel's "sync now" button). Authorised with a shared secret so it can
+ * be called without an admin session cookie.
+ */
+api.post('/sync/ebay', async (c) => {
+  if (!c.env.SYNC_TOKEN) {
+    return c.json({ error: 'sync is not configured (SYNC_TOKEN unset)' }, 503);
+  }
+
+  const header = c.req.header('Authorization');
+  const bearer = header?.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : undefined;
+  const provided = bearer ?? c.req.header('X-Sync-Token');
+
+  if (!secretsMatch(provided, c.env.SYNC_TOKEN)) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+
+  const result = await runEbaySync(c.env, 'api');
+  return c.json(result);
+});
+
+/**
+ * Small public JSON feed of active products, for future integrations
+ * (e.g. a marketplace listing tool, a price-comparison widget). Never
+ * exposes cost price, stock-lock flags or anything from the eBay account.
+ */
+api.get('/products.json', async (c) => {
+  const limit = clampInt(c.req.query('limit'), 1, 100, 24);
+  const offset = clampInt(c.req.query('offset'), 0, 1_000_000, 0);
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT p.id, p.slug, p.title, p.price_pence, p.stock, p.image_url, c.slug AS category_slug
+     FROM products p
+     LEFT JOIN categories c ON c.id = p.category_id
+     WHERE p.status = 'active'
+     ORDER BY p.id ASC
+     LIMIT ? OFFSET ?`,
+  )
+    .bind(limit, offset)
+    .all<{
+      id: number;
+      slug: string;
+      title: string;
+      price_pence: number;
+      stock: number;
+      image_url: string | null;
+      category_slug: string | null;
+    }>();
+
+  c.header('Cache-Control', 'public, max-age=300');
+  return c.json({
+    products: (results ?? []).map((p) => ({
+      id: p.id,
+      slug: p.slug,
+      title: p.title,
+      price_pence: p.price_pence,
+      stock: p.stock,
+      category: p.category_slug,
+      image: p.image_url,
+    })),
+    limit,
+    offset,
+  });
+});

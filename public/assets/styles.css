@@ -283,3 +283,6 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .site-header, .catnav, .topbar, .site-footer, .no-print { display: none !important; }
   body { background: #fff; }
 }
+
+/* ---------- neutral image placeholder (missing product/category images) ---------- */
+.ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--ink-faint); }

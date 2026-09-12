@@ -23,8 +23,8 @@ const MARKETPLACE_ID = 'EBAY_GB';
 export interface BrowseFetchOptions {
   /** Overall cap on listings pulled for this account this run. */
   maxListings: number;
-  /** Item ids with no existing product yet — only these get the enrichment call. */
-  newItemIds: Set<string>;
+  /** ebay_item_id values that already have a product row — anything else is "new" and eligible for enrichment. */
+  existingItemIds: Set<string>;
   /** Cap on enrichment (GET /item/{id}) calls for this account this run. */
   maxEnrichCalls: number;
 }
@@ -78,7 +78,8 @@ export async function fetchBrowseListings(
   let enrichCalls = 0;
   for (const summary of summaries) {
     let detail: BrowseItemDetail | null = null;
-    if (!rateLimited && options.newItemIds.has(summary.itemId) && enrichCalls < options.maxEnrichCalls) {
+    const isNew = !options.existingItemIds.has(summary.itemId);
+    if (!rateLimited && isNew && enrichCalls < options.maxEnrichCalls) {
       enrichCalls++;
       try {
         detail = await fetchItemDetail(token, summary.itemId);

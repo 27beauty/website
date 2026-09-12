@@ -1,0 +1,168 @@
+/* 27beauty admin panel. Loaded after styles.css — reuses its tokens
+   (--brand, --line, --radius, ...) and adds dense, phone-friendly chrome. */
+
+body.admin-page {
+  background: var(--surface-2);
+  min-height: 100vh;
+}
+
+.admin-shell { display: flex; flex-direction: column; min-height: 100vh; }
+
+/* ---------- top bar ---------- */
+.admin-topbar {
+  background: var(--brand-ink);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.admin-brand {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: #fff;
+  white-space: nowrap;
+}
+.admin-brand span { color: var(--accent); }
+.admin-brand small { font-family: var(--font); font-weight: 600; font-size: .65rem; opacity: .75; text-transform: uppercase; letter-spacing: .06em; margin-left: 2px; }
+.admin-brand:hover { text-decoration: none; }
+
+.admin-user { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.admin-user-email { font-size: .82rem; opacity: .9; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-user-link { font-size: .8rem; color: #f3e3ec; text-decoration: underline; }
+.admin-user form { margin: 0; }
+.admin-topbar .btn-secondary { background: rgba(255,255,255,.12); color: #fff; border-color: rgba(255,255,255,.28); }
+.admin-topbar .btn-secondary:hover { background: rgba(255,255,255,.22); }
+
+/* ---------- section nav: horizontal pills on phone, sidebar on desktop ---------- */
+.admin-layout { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.admin-nav {
+  display: flex; gap: 4px; overflow-x: auto; background: var(--surface);
+  border-bottom: 1px solid var(--line); padding: 8px 10px; scrollbar-width: thin;
+}
+.admin-nav a {
+  white-space: nowrap; padding: 9px 14px; border-radius: 999px; font-size: .88rem;
+  font-weight: 600; color: var(--ink-soft);
+}
+.admin-nav a:hover { background: var(--surface-2); text-decoration: none; color: var(--ink); }
+.admin-nav a[aria-current="page"] { background: var(--brand-soft); color: var(--brand-ink); }
+
+.admin-main { flex: 1; padding: 16px 14px 48px; max-width: 1280px; width: 100%; margin-inline: auto; }
+.admin-flash { margin-bottom: 16px; }
+
+@media (min-width: 900px) {
+  .admin-layout { flex-direction: row; align-items: flex-start; }
+  .admin-nav {
+    flex-direction: column; width: 200px; flex: none; border-bottom: 0; border-right: 1px solid var(--line);
+    padding: 16px 10px; position: sticky; top: 53px; align-self: flex-start; height: calc(100vh - 53px);
+  }
+  .admin-nav a { padding: 10px 14px; }
+  .admin-main { padding: 24px 28px 56px; }
+}
+
+/* ---------- page headers ---------- */
+.admin-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+.admin-head h1 { margin-bottom: .2em; }
+.admin-head .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---------- stat tiles (dashboard) ---------- */
+.stat-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 22px; }
+.stat-tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow-sm); }
+.stat-tile .stat-label { font-size: .76rem; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-faint); margin-bottom: 6px; }
+.stat-tile .stat-value { font-size: 1.5rem; font-weight: 700; font-family: var(--font-display); line-height: 1.1; }
+.stat-tile .stat-sub { font-size: .8rem; color: var(--ink-soft); margin-top: 4px; }
+.stat-tile.stat-warn .stat-value { color: var(--warn); }
+.stat-tile.stat-bad .stat-value { color: var(--bad); }
+
+.quick-links { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0 26px; }
+
+/* ---------- panels + forms ---------- */
+.admin-panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow-sm); margin-bottom: 18px; }
+.admin-panel h2, .admin-panel h3 { margin-top: 0; }
+.admin-grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
+@media (min-width: 640px) { .admin-grid.cols-2 { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 860px) { .admin-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; } }
+.checkbox-row { display: flex; align-items: center; gap: 8px; }
+.checkbox-row label { margin: 0; font-weight: 500; }
+.checkbox-row input[type=checkbox] { width: 18px; height: 18px; }
+fieldset { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 14px; margin: 0 0 14px; }
+fieldset legend { font-weight: 700; font-size: .82rem; text-transform: uppercase; letter-spacing: .03em; color: var(--ink-soft); padding: 0 6px; }
+.lock-hint { font-size: .8rem; color: var(--ink-faint); margin: 2px 0 0; }
+
+/* ---------- filter bar ---------- */
+.filter-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; align-items: end; }
+.filter-bar .field { margin-bottom: 0; min-width: 130px; }
+.filter-bar .field-wide { flex: 1 1 200px; }
+
+/* ---------- dense admin tables ---------- */
+.admin-table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); max-height: 74vh; }
+.admin-table { width: 100%; border-collapse: collapse; font-size: .87rem; min-width: 640px; }
+.admin-table th, .admin-table td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+.admin-table thead th { position: sticky; top: 0; background: var(--surface-2); z-index: 1; white-space: nowrap; font-size: .74rem; text-transform: uppercase; letter-spacing: .03em; color: var(--ink-soft); }
+.admin-table tbody tr:hover { background: var(--surface-2); }
+.admin-table td.num, .admin-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.admin-table img.thumb { width: 40px; height: 40px; object-fit: contain; background: var(--surface-2); border-radius: 6px; border: 1px solid var(--line); }
+.admin-table input[type=number] { width: 72px; padding: 6px 8px; min-height: 36px; }
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.row-actions form { margin: 0; }
+
+/* Bigger tap targets everywhere in admin — this gets used on a phone. */
+.admin-page .btn, .admin-page button, .admin-page select, .admin-page input, .admin-page a.btn {
+  min-height: 40px;
+}
+.admin-table .btn-sm { min-height: 32px; }
+
+/* ---------- coupon / QR cards ---------- */
+.qr-sheet { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6mm; padding: 10mm; }
+.qr-card {
+  border: 1px dashed var(--ink-faint); border-radius: 10px; padding: 6mm; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 3mm; break-inside: avoid; page-break-inside: avoid;
+}
+.qr-card .qr-wordmark { font-family: var(--font-display); font-weight: 700; font-size: 1rem; color: var(--brand); }
+.qr-card .qr-tagline { font-size: .72rem; color: var(--ink-soft); margin: 0; }
+.qr-card svg { width: 30mm; height: 30mm; }
+.qr-card .qr-code-text { font-weight: 700; letter-spacing: .05em; font-size: .95rem; }
+.qr-card .qr-domain { font-size: .68rem; color: var(--ink-faint); }
+
+.qr-poster { max-width: 420px; margin: 0 auto; text-align: center; padding: 32px 20px; }
+.qr-poster svg { width: 60mm; height: 60mm; margin: 0 auto; }
+
+.badge-source { font-size: .68rem; font-weight: 700; padding: 2px 7px; border-radius: 999px; }
+.badge-source.ebay { background: #fde9d0; color: #8a4a06; }
+.badge-source.manual { background: var(--surface-2); color: var(--ink-soft); }
+.badge-source.csv { background: var(--ok-soft); color: var(--ok); }
+
+.secret-status { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: .9rem; }
+.secret-status:last-child { border-bottom: 0; }
+.secret-set { color: var(--ok); font-weight: 600; }
+.secret-unset { color: var(--bad); font-weight: 600; }
+
+/* ---------- login / first-run setup ---------- */
+.admin-auth-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; background: var(--surface-2); }
+.admin-auth-card { width: 100%; max-width: 400px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 28px 24px; box-shadow: var(--shadow-md); }
+.admin-auth-card h1 { font-size: 1.3rem; margin-bottom: 4px; }
+.admin-auth-sub { color: var(--ink-soft); font-size: .88rem; margin-bottom: 18px; }
+.admin-auth-wordmark { font-family: var(--font-display); font-weight: 700; font-size: 1.6rem; color: var(--brand); text-align: center; display: block; margin-bottom: 18px; }
+
+/* ---------- printable packing slip / QR sheets ---------- */
+.admin-print-page { background: #fff; color: var(--ink); font-family: var(--font); padding: 16px; }
+.print-actions { margin-bottom: 16px; }
+.slip-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 18px; border-bottom: 2px solid var(--ink); padding-bottom: 12px; }
+.slip-head .slip-wordmark { font-family: var(--font-display); font-size: 1.6rem; font-weight: 700; color: var(--brand); }
+.slip-meta { text-align: right; font-size: .9rem; }
+.slip-columns { display: grid; gap: 20px; grid-template-columns: 1fr; margin-bottom: 18px; }
+@media (min-width: 640px) { .slip-columns { grid-template-columns: 1fr 1fr; } }
+
+@media print {
+  body.admin-page, body.admin-print-page { background: #fff; }
+  .admin-topbar, .admin-nav, .no-print { display: none !important; }
+  .admin-main { padding: 0; max-width: none; }
+  .admin-table-wrap { max-height: none; overflow: visible; border: 0; }
+  .qr-sheet { padding: 0; }
+  a { text-decoration: none; color: inherit; }
+}
