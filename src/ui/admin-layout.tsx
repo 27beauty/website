@@ -19,6 +19,24 @@ export interface AdminLayoutProps {
   bodyClass?: string;
 }
 
+/** Small line-icon set for the nav, drawn inline so there's no extra asset or build step. */
+const NAV_ICONS: Record<AdminSection, string> = {
+  dashboard: 'M4 11.5 12 4l8 7.5M6 10.2V20h5v-5.5h2V20h5v-9.8',
+  products: 'M13 4h5a2 2 0 0 1 2 2v5L11.5 19.5 4 12 13 4Z M15.5 8.5h.01',
+  orders: 'M3 8l9-4 9 4-9 4-9-4Z M3 8v8l9 4 9-4V8 M12 12v8',
+  coupons: 'M4 9a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1.4a1.7 1.7 0 0 0 0 3.2V16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1.4a1.7 1.7 0 0 0 0-3.2V9Z',
+  settings:
+    'M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z M19.4 12a7.4 7.4 0 0 1-.1 1.3l1.9 1.5-1.9 3.3-2.2-.9a7.6 7.6 0 0 1-2.3 1.3L14.5 21h-5l-.3-2.5a7.6 7.6 0 0 1-2.3-1.3l-2.2.9-1.9-3.3 1.9-1.5A7.4 7.4 0 0 1 4.6 12c0-.4 0-.9.1-1.3l-1.9-1.5 1.9-3.3 2.2.9a7.6 7.6 0 0 1 2.3-1.3L9.5 3h5l.3 2.5a7.6 7.6 0 0 1 2.3 1.3l2.2-.9 1.9 3.3-1.9 1.5c.1.4.1.9.1 1.3Z',
+};
+
+const NavIcon: FC<{ id: AdminSection }> = ({ id }) => (
+  <span class="nav-icon" aria-hidden="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+      <path d={NAV_ICONS[id]} />
+    </svg>
+  </span>
+);
+
 const NAV: Array<{ id: AdminSection; label: string; href: string }> = [
   { id: 'dashboard', label: 'Dashboard', href: '/admin' },
   { id: 'products', label: 'Products', href: '/admin/products' },
@@ -70,7 +88,7 @@ export const AdminLayout: FC<PropsWithChildren<AdminLayoutProps>> = (props) => {
     <html lang="en-GB">
       <head>
         <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <title>{title}</title>
         <meta name="robots" content="noindex,nofollow" />
         <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
@@ -103,17 +121,21 @@ export const AdminLayout: FC<PropsWithChildren<AdminLayoutProps>> = (props) => {
               <nav class="admin-nav no-print" aria-label="Admin sections">
                 {NAV.map((item) => (
                   <a href={item.href} aria-current={props.active === item.id ? 'page' : undefined}>
-                    {item.label}
+                    <NavIcon id={item.id} />
+                    <span class="nav-label">{item.label}</span>
                   </a>
                 ))}
               </nav>
             ) : null}
             <main class="admin-main">
-              {props.msg ? <div class="notice notice-ok admin-flash">{props.msg}</div> : null}
-              {props.err ? <div class="notice notice-bad admin-flash">{props.err}</div> : null}
+              {props.msg ? <Flash id="flash-msg" kind="ok" text={props.msg} /> : null}
+              {props.err ? <Flash id="flash-err" kind="bad" text={props.err} /> : null}
               {props.children}
             </main>
           </div>
+          {/* A jump-to-stock shortcut earns its place on the dashboard. On the
+              other pages it only floats over forms and the sticky save bar. */}
+          {props.admin && props.active === 'dashboard' ? <StockShortcut /> : null}
         </div>
       </body>
     </html>

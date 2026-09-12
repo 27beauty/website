@@ -143,6 +143,11 @@ products.get('/', async (c) => {
         </div>
       </div>
 
+      {/* Collapsed by default: the stock table is what the owner opens this
+          page for, and an expanded filter form pushed it off a phone screen.
+          Opens automatically when a filter is actually in use. */}
+      <details class="filter-details" open={Boolean(query.q || query.category || query.status || query.source || query.lowStock)}>
+        <summary>Search &amp; filter</summary>
       <form method="get" action="/admin/products" class="filter-bar">
         <div class="field field-wide">
           <label for="q">Search</label>
@@ -206,6 +211,7 @@ products.get('/', async (c) => {
           Filter
         </button>
       </form>
+      </details>
 
       <form id="bulk-stock-form" method="post" action="/admin/products/bulk-stock">
         <CsrfField token={admin.csrf} />
@@ -213,17 +219,17 @@ products.get('/', async (c) => {
       </form>
 
       <div class="admin-table-wrap">
-        <table class="admin-table">
+        <table class="admin-table table-products">
           <thead>
             <tr>
               <th></th>
               <th>Title</th>
-              <th>SKU</th>
-              <th>Category</th>
+              <th class="col-optional">SKU</th>
+              <th class="col-optional">Category</th>
               <th class="num">Price</th>
               <th class="num">Stock</th>
               <th>Status</th>
-              <th>Source</th>
+              <th class="col-optional">Source</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -236,8 +242,8 @@ products.get('/', async (c) => {
                 <td>
                   <a href={`/admin/products/${p.id}`}>{p.title}</a>
                 </td>
-                <td class="faint">{p.sku ?? '—'}</td>
-                <td class="faint">{p.category_name ?? '—'}</td>
+                <td class="faint col-optional">{p.sku ?? '—'}</td>
+                <td class="faint col-optional">{p.category_name ?? '—'}</td>
                 <td class="num">{formatPence(p.price_pence)}</td>
                 <td class="num">
                   <input
@@ -248,10 +254,16 @@ products.get('/', async (c) => {
                     step="1"
                     form="bulk-stock-form"
                     disabled={p.stock_locked === 1 && p.source === 'ebay'}
+                    aria-label={`Stock for ${p.title}`}
+                    title={
+                      p.stock_locked === 1 && p.source === 'ebay'
+                        ? 'Stock is locked for this product — unlock it in the product editor to edit here.'
+                        : undefined
+                    }
                   />
                 </td>
                 <td>{statusPill(p.status)}</td>
-                <td>
+                <td class="col-optional">
                   <span class={`badge-source ${p.source}`}>{p.source}</span>
                 </td>
                 <td class="row-actions">

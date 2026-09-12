@@ -111,11 +111,11 @@ orders.get('/', async (c) => {
           <thead>
             <tr>
               <th>Order</th>
-              <th>Date</th>
+              <th class="col-optional">Date</th>
               <th>Customer</th>
               <th>Status</th>
               <th class="num">Total</th>
-              <th>Coupon</th>
+              <th class="col-optional">Coupon</th>
             </tr>
           </thead>
           <tbody>
@@ -124,14 +124,16 @@ orders.get('/', async (c) => {
                 <td>
                   <a href={`/admin/orders/${o.id}`}>{o.order_number}</a>
                 </td>
-                <td class="faint nowrap">{o.created_at}</td>
+                <td class="faint nowrap col-optional">{o.created_at}</td>
                 <td>
                   {o.customer_name ?? '—'}
                   <div class="faint">{o.email ?? ''}</div>
+                  {/* Shown here only on phones, where the Date column is hidden. */}
+                  <div class="faint small show-when-narrow">{o.created_at?.slice(0, 10)}</div>
                 </td>
                 <td>{statusPill(o.status)}</td>
                 <td class="num">{formatPence(o.total_pence)}</td>
-                <td class="faint">{o.coupon_code ?? '—'}</td>
+                <td class="faint col-optional">{o.coupon_code ?? '—'}</td>
               </tr>
             ))}
             {!(listRes.results ?? []).length ? (

@@ -1,5 +1,12 @@
 /* 27beauty admin panel. Loaded after styles.css — reuses its tokens
-   (--brand, --line, --radius, ...) and adds dense, phone-friendly chrome. */
+   (--brand, --line, --radius, --tap, --space-*, ...) and adds dense,
+   phone-friendly chrome. One user: the shop owner, often one-handed on a
+   phone in the stockroom. Priority order: stock > orders > QR cards >
+   products/settings — the CSS below is weighted the same way. */
+
+:root {
+  --admin-nav-h: 60px; /* height of the mobile bottom tab bar, used to clear fixed/sticky elements */
+}
 
 body.admin-page {
   background: var(--surface-2);
@@ -17,9 +24,10 @@ body.admin-page {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 14px;
+  padding-top: max(10px, env(safe-area-inset-top));
   position: sticky;
   top: 0;
-  z-index: 50;
+  z-index: 60;
 }
 .admin-brand {
   font-family: var(--font-display);
@@ -29,39 +37,57 @@ body.admin-page {
   white-space: nowrap;
 }
 .admin-brand span { color: var(--accent); }
-.admin-brand small { font-family: var(--font); font-weight: 600; font-size: .65rem; opacity: .75; text-transform: uppercase; letter-spacing: .06em; margin-left: 2px; }
+.admin-brand small { font-family: var(--font); font-weight: 600; font-size: .65rem; opacity: .8; text-transform: uppercase; letter-spacing: .06em; margin-left: 2px; }
 .admin-brand:hover { text-decoration: none; }
+.admin-brand:focus-visible, .admin-nav a:focus-visible, .stock-fab:focus-visible, .flash-close:focus-visible {
+  outline: 2px solid #fff; outline-offset: 2px; border-radius: 4px;
+}
 
 .admin-user { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 .admin-user-email { font-size: .82rem; opacity: .9; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.admin-user-link { font-size: .8rem; color: #f3e3ec; text-decoration: underline; }
+.admin-user-link { font-size: .8rem; color: #f3e3ec; text-decoration: underline; min-height: 0; }
 .admin-user form { margin: 0; }
-.admin-topbar .btn-secondary { background: rgba(255,255,255,.12); color: #fff; border-color: rgba(255,255,255,.28); }
-.admin-topbar .btn-secondary:hover { background: rgba(255,255,255,.22); }
+.admin-topbar .btn-secondary { background: rgba(255,255,255,.14); color: #fff; border-color: rgba(255,255,255,.3); }
+.admin-topbar .btn-secondary:hover { background: rgba(255,255,255,.24); }
 
-/* ---------- section nav: horizontal pills on phone, sidebar on desktop ---------- */
+/* ---------- section nav: thumb-reach bottom tab bar on phone, sidebar on desktop ---------- */
 .admin-layout { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
 .admin-nav {
-  display: flex; gap: 4px; overflow-x: auto; background: var(--surface);
-  border-bottom: 1px solid var(--line); padding: 8px 10px; scrollbar-width: thin;
+  display: flex; align-items: stretch; justify-content: space-around; gap: 2px;
+  background: var(--surface); border-top: 1px solid var(--line);
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 55; height: var(--admin-nav-h);
+  padding-bottom: env(safe-area-inset-bottom);
+  box-shadow: 0 -2px 10px rgba(27, 22, 32, .08);
 }
 .admin-nav a {
-  white-space: nowrap; padding: 9px 14px; border-radius: 999px; font-size: .88rem;
-  font-weight: 600; color: var(--ink-soft);
+  flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; padding: 6px 2px; font-size: .68rem; font-weight: 600; color: var(--ink-soft);
+  border-top: 2px solid transparent; text-align: center;
 }
-.admin-nav a:hover { background: var(--surface-2); text-decoration: none; color: var(--ink); }
-.admin-nav a[aria-current="page"] { background: var(--brand-soft); color: var(--brand-ink); }
+.admin-nav a .nav-icon { width: 21px; height: 21px; display: block; }
+.admin-nav a .nav-icon svg { width: 100%; height: 100%; }
+.admin-nav a .nav-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.admin-nav a:hover { color: var(--ink); text-decoration: none; }
+.admin-nav a[aria-current="page"] { color: var(--brand-ink); border-top-color: var(--brand); background: var(--brand-soft); }
 
-.admin-main { flex: 1; padding: 16px 14px 48px; max-width: 1280px; width: 100%; margin-inline: auto; }
+/* Content needs to clear the fixed bottom bar (+ the stock FAB floating above it). */
+.admin-main { flex: 1; padding: 16px 14px calc(var(--admin-nav-h) + 88px); max-width: 1280px; width: 100%; margin-inline: auto; }
 .admin-flash { margin-bottom: 16px; }
 
 @media (min-width: 900px) {
   .admin-layout { flex-direction: row; align-items: flex-start; }
   .admin-nav {
-    flex-direction: column; width: 200px; flex: none; border-bottom: 0; border-right: 1px solid var(--line);
-    padding: 16px 10px; position: sticky; top: 53px; align-self: flex-start; height: calc(100vh - 53px);
+    position: sticky; flex-direction: column; justify-content: flex-start; width: 208px; flex: none; height: auto;
+    border-top: 0; border-right: 1px solid var(--line); box-shadow: none; padding: 18px 10px; gap: 2px;
+    top: 53px; align-self: flex-start; min-height: calc(100vh - 53px); padding-bottom: 10px;
   }
-  .admin-nav a { padding: 10px 14px; }
+  .admin-nav a {
+    flex-direction: row; justify-content: flex-start; gap: 10px; padding: 11px 14px; font-size: .92rem;
+    border-top: 0; border-left: 3px solid transparent; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  }
+  .admin-nav a .nav-icon { width: 19px; height: 19px; }
+  .admin-nav a[aria-current="page"] { border-top-color: transparent; border-left-color: var(--brand); }
   .admin-main { padding: 24px 28px 56px; }
 }
 
@@ -70,13 +96,47 @@ body.admin-page {
 .admin-head h1 { margin-bottom: .2em; }
 .admin-head .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
+/* ---------- flash messages: impossible to miss, dismissible with no JS ---------- */
+.flash-toggle { display: none; }
+.flash-notice {
+  position: relative; display: flex; align-items: flex-start; gap: 10px;
+  padding: 13px 44px 13px 14px; border-left: 4px solid currentColor; font-weight: 600; box-shadow: var(--shadow-sm);
+}
+.flash-icon {
+  flex: none; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid currentColor;
+  display: grid; place-items: center; font-size: .8rem; font-weight: 800; margin-top: 1px;
+}
+.flash-text { flex: 1; padding-top: 2px; line-height: 1.4; }
+.flash-close {
+  position: absolute; top: 6px; right: 6px; width: 32px; height: 32px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 1.15rem; line-height: 1; cursor: pointer; color: inherit;
+}
+.flash-close:hover { background: rgba(0, 0, 0, .08); }
+.flash-toggle:checked ~ .flash-notice { display: none; }
+
+/* ---------- stock shortcut: the most-used action, always one thumb-tap away ---------- */
+.stock-fab {
+  position: fixed; right: 14px; bottom: calc(var(--admin-nav-h) + env(safe-area-inset-bottom) + 14px); z-index: 56;
+  display: inline-flex; align-items: center; gap: 8px; padding: 0 18px; min-height: 50px;
+  background: var(--brand); color: #fff; border-radius: 999px; font-weight: 700; font-size: .9rem;
+  box-shadow: var(--shadow-md); text-decoration: none;
+}
+.stock-fab:hover { background: var(--brand-ink); text-decoration: none; }
+.stock-fab span[aria-hidden] { font-size: 1.05rem; }
+
+@media (min-width: 900px) {
+  .stock-fab { right: 26px; bottom: 26px; }
+}
+
 /* ---------- stat tiles (dashboard) ---------- */
 .stat-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 22px; }
-.stat-tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow-sm); }
-.stat-tile .stat-label { font-size: .76rem; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-faint); margin-bottom: 6px; }
-.stat-tile .stat-value { font-size: 1.5rem; font-weight: 700; font-family: var(--font-display); line-height: 1.1; }
+.stat-tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow-sm); border-top: 3px solid var(--line); }
+.stat-tile .stat-label { font-size: .76rem; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft); margin-bottom: 6px; }
+.stat-tile .stat-value { font-size: 1.6rem; font-weight: 700; font-family: var(--font-display); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .stat-tile .stat-sub { font-size: .8rem; color: var(--ink-soft); margin-top: 4px; }
+.stat-tile.stat-warn { border-top-color: var(--warn); }
 .stat-tile.stat-warn .stat-value { color: var(--warn); }
+.stat-tile.stat-bad { border-top-color: var(--bad); }
 .stat-tile.stat-bad .stat-value { color: var(--bad); }
 
 .quick-links { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0 26px; }
@@ -87,12 +147,22 @@ body.admin-page {
 .admin-grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
 @media (min-width: 640px) { .admin-grid.cols-2 { grid-template-columns: 1fr 1fr; } }
 @media (min-width: 860px) { .admin-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; } }
-.checkbox-row { display: flex; align-items: center; gap: 8px; }
+
+.checkbox-row { display: flex; align-items: center; gap: 8px; min-height: var(--tap); }
 .checkbox-row label { margin: 0; font-weight: 500; }
-.checkbox-row input[type=checkbox] { width: 18px; height: 18px; }
+.checkbox-row input[type=checkbox] { width: 20px; height: 20px; }
+
 fieldset { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 14px; margin: 0 0 14px; }
 fieldset legend { font-weight: 700; font-size: .82rem; text-transform: uppercase; letter-spacing: .03em; color: var(--ink-soft); padding: 0 6px; }
 .lock-hint { font-size: .8rem; color: var(--ink-faint); margin: 2px 0 0; }
+
+/* Money fields: a small £ mark and tabular figures so they read as currency,
+   not arbitrary text. Matches inputmode="decimal", already on price/compare-at/cost. */
+input[inputmode="decimal"] {
+  padding-left: 26px;
+  background: left 9px center / 13px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13'%3E%3Ctext x='0' y='11' font-family='sans-serif' font-size='13' font-weight='700' fill='%236f6674'%3E%C2%A3%3C/text%3E%3C/svg%3E");
+}
+input[inputmode="decimal"], input[type="number"] { font-variant-numeric: tabular-nums; }
 
 /* ---------- filter bar ---------- */
 .filter-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; align-items: end; }
@@ -102,20 +172,73 @@ fieldset legend { font-weight: 700; font-size: .82rem; text-transform: uppercase
 /* ---------- dense admin tables ---------- */
 .admin-table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); max-height: 74vh; }
 .admin-table { width: 100%; border-collapse: collapse; font-size: .87rem; min-width: 640px; }
-.admin-table th, .admin-table td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+.admin-table th, .admin-table td { padding: 10px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
 .admin-table thead th { position: sticky; top: 0; background: var(--surface-2); z-index: 1; white-space: nowrap; font-size: .74rem; text-transform: uppercase; letter-spacing: .03em; color: var(--ink-soft); }
+.admin-table tbody tr { min-height: var(--tap); }
 .admin-table tbody tr:hover { background: var(--surface-2); }
 .admin-table td.num, .admin-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .admin-table img.thumb { width: 40px; height: 40px; object-fit: contain; background: var(--surface-2); border-radius: 6px; border: 1px solid var(--line); }
-.admin-table input[type=number] { width: 72px; padding: 6px 8px; min-height: 36px; }
-.row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Stock quick-edit: the single most-used control in the whole panel. Bigger,
+   bolder, unmissable, with a plain visual cue that it's editable. */
+.admin-table input[type=number] {
+  width: 84px; min-height: var(--tap); padding: 6px 8px; text-align: center;
+  font-size: 1.05rem; font-weight: 700; background: var(--accent-soft); border: 1.5px solid var(--line);
+}
+.admin-table input[type=number]:focus { background: var(--surface); border-color: var(--brand); }
+.admin-table input[type=number]:disabled {
+  background: var(--surface-2); border-style: dashed; color: var(--ink-faint); font-weight: 600; cursor: not-allowed;
+}
+
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .row-actions form { margin: 0; }
+/* One obvious primary action per row (always listed first in the markup —
+   Edit), everything after it demoted to a quiet text-style action so it
+   doesn't compete for the thumb. Destructive actions stay colour-coded but
+   are demoted the same way. */
+.row-actions > a:first-child,
+.row-actions > form:first-child > .btn {
+  background: var(--brand-soft); color: var(--brand-ink); border-color: transparent; font-weight: 700; min-height: 40px;
+}
+.row-actions > a:first-child:hover,
+.row-actions > form:first-child > .btn:hover { background: var(--brand); color: #fff; }
+.row-actions > a:not(:first-child).btn-secondary,
+.row-actions > form:not(:first-child) > .btn-secondary {
+  background: transparent; border-color: transparent; color: var(--ink-soft); box-shadow: none;
+}
+.row-actions > a:not(:first-child).btn-secondary:hover,
+.row-actions > form:not(:first-child) > .btn-secondary:hover { background: var(--surface-2); color: var(--ink); }
+.row-actions .btn-danger {
+  background: transparent; color: var(--bad); border: 1px solid var(--bad-soft); box-shadow: none;
+}
+.row-actions .btn-danger:hover { background: var(--bad-soft); }
+.admin-table .btn-sm { min-height: 38px; padding: 6px 12px; }
+
+/* Hide columns that aren't essential on a phone instead of letting the table
+   scroll sideways. Mark a column `col-optional` in the route markup to hide it. */
+@media (max-width: 640px) {
+  .col-optional { display: none; }
+  .admin-table { min-width: 0; font-size: .85rem; }
+  .admin-table th, .admin-table td { padding: 11px 8px; }
+}
 
 /* Bigger tap targets everywhere in admin — this gets used on a phone. */
 .admin-page .btn, .admin-page button, .admin-page select, .admin-page input, .admin-page a.btn {
-  min-height: 40px;
+  min-height: var(--tap);
 }
-.admin-table .btn-sm { min-height: 32px; }
+
+/* The bulk stock-save bar sits right after the table (products list) — pin
+   it to the bottom of the screen so "Save all changes" never needs a scroll
+   to reach, on a phone or a laptop. */
+.admin-table-wrap + .row-between {
+  position: sticky; bottom: calc(var(--admin-nav-h) + env(safe-area-inset-bottom));
+  z-index: 5; background: var(--surface-2); margin-top: 0 !important; padding: 10px 2px;
+  border-top: 1px solid var(--line);
+}
+.admin-table-wrap + .row-between .btn:not(.pagination a) { box-shadow: var(--shadow-md); }
+@media (min-width: 900px) {
+  .admin-table-wrap + .row-between { bottom: 0; }
+}
 
 /* ---------- coupon / QR cards ---------- */
 .qr-sheet { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6mm; padding: 10mm; }
@@ -125,19 +248,71 @@ fieldset legend { font-weight: 700; font-size: .82rem; text-transform: uppercase
 }
 .qr-card .qr-wordmark { font-family: var(--font-display); font-weight: 700; font-size: 1rem; color: var(--brand); }
 .qr-card .qr-tagline { font-size: .72rem; color: var(--ink-soft); margin: 0; }
-.qr-card svg { width: 30mm; height: 30mm; }
+.qr-card svg { width: 30mm; height: 30mm; min-width: 25mm; min-height: 25mm; }
 .qr-card .qr-code-text { font-weight: 700; letter-spacing: .05em; font-size: .95rem; }
 .qr-card .qr-domain { font-size: .68rem; color: var(--ink-faint); }
 
 .qr-poster { max-width: 420px; margin: 0 auto; text-align: center; padding: 32px 20px; }
-.qr-poster svg { width: 60mm; height: 60mm; margin: 0 auto; }
+.qr-poster svg { width: 60mm; height: 60mm; min-width: 25mm; min-height: 25mm; margin: 0 auto; }
+
+/* -- "QR discount for this item" panel: one confident action, then a row of
+   small cards for the codes already made. -- */
+.qr-create-form {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 18px;
+  background: var(--accent-soft); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 16px; margin-top: 12px;
+}
+.qr-create-form .field { margin-bottom: 0; }
+.qr-create-form > button[type="submit"] { margin-left: auto; }
+
+.input-suffix {
+  display: flex; align-items: stretch; max-width: 160px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface); overflow: hidden;
+}
+.input-suffix input {
+  border: 0; border-radius: 0; min-width: 56px; width: 70px; flex: 1 1 auto; text-align: right;
+  min-height: calc(var(--tap) - 2px); background: var(--surface);
+}
+.input-suffix input:focus { outline: none; background: var(--surface); }
+.input-suffix span {
+  flex: none; display: flex; align-items: center; padding: 0 10px; background: var(--surface-2);
+  color: var(--ink-soft); font-weight: 700; font-size: .85rem; white-space: nowrap; border-left: 1px solid var(--line);
+}
+.input-suffix:focus-within { outline: 2px solid var(--brand); outline-offset: 1px; border-color: var(--brand); }
+
+.check {
+  display: flex; align-items: center; gap: 10px; min-height: var(--tap); padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer; font-weight: 500; margin: 0;
+}
+.check:hover { background: var(--surface-2); }
+.check input[type=checkbox] { flex: none; width: 20px; height: 20px; margin: 0; }
+.check span { line-height: 1.3; }
+
+.qr-existing { margin-top: 22px; }
+.qr-existing h3 { margin-bottom: 10px; }
+.qr-card-list { display: flex; flex-direction: column; gap: 10px; }
+.qr-card-mini {
+  display: flex; gap: 14px; align-items: center; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px;
+  flex-wrap: wrap;
+}
+.qr-card-mini-img {
+  /* Big enough for the owner to actually test-scan from the screen before
+     committing a print run — 56px was a decorative thumbnail, not a QR code. */
+  flex: none; width: 104px; height: 104px; padding: 6px; background: #fff; border: 1px solid var(--line);
+  border-radius: 6px; display: grid; place-items: center;
+}
+.qr-card-mini-img svg { width: 100%; height: 100%; }
+.qr-card-mini-body { flex: 1; min-width: 0; }
+.qr-card-mini-body strong { font-size: .95rem; letter-spacing: .02em; }
+.qr-card-mini-body .row { margin-top: 8px; gap: 6px; }
 
 .badge-source { font-size: .68rem; font-weight: 700; padding: 2px 7px; border-radius: 999px; }
 .badge-source.ebay { background: #fde9d0; color: #8a4a06; }
 .badge-source.manual { background: var(--surface-2); color: var(--ink-soft); }
 .badge-source.csv { background: var(--ok-soft); color: var(--ok); }
 
-.secret-status { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: .9rem; }
+.secret-status { display: flex; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: .9rem; align-items: center; }
 .secret-status:last-child { border-bottom: 0; }
 .secret-set { color: var(--ok); font-weight: 600; }
 .secret-unset { color: var(--bad); font-weight: 600; }
@@ -160,9 +335,92 @@ fieldset legend { font-weight: 700; font-size: .82rem; text-transform: uppercase
 
 @media print {
   body.admin-page, body.admin-print-page { background: #fff; }
-  .admin-topbar, .admin-nav, .no-print { display: none !important; }
+  .admin-topbar, .admin-nav, .stock-fab, .no-print { display: none !important; }
   .admin-main { padding: 0; max-width: none; }
   .admin-table-wrap { max-height: none; overflow: visible; border: 0; }
+  .admin-table-wrap + .row-between { position: static; box-shadow: none; border-top: 0; }
   .qr-sheet { padding: 0; }
+  .qr-card { break-inside: avoid; page-break-inside: avoid; border-color: #999; }
+  .qr-poster { break-inside: avoid; page-break-inside: avoid; }
   a { text-decoration: none; color: inherit; }
 }
+
+/* Search & filter disclosure — collapsed by default so the stock table, which
+   is what this page is really for, is the first thing on screen. */
+.filter-details {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  margin-bottom: var(--space-4, 16px);
+}
+.filter-details > summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  min-height: var(--tap, 44px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: .95rem;
+  color: var(--ink);
+  list-style: none;
+}
+.filter-details > summary::-webkit-details-marker { display: none; }
+.filter-details > summary::before {
+  content: "⌕";
+  font-size: 1.05rem;
+  color: var(--brand);
+}
+.filter-details > summary::after {
+  content: "▾";
+  margin-left: auto;
+  color: var(--ink-faint);
+  transition: transform .15s ease;
+}
+.filter-details[open] > summary::after { transform: rotate(180deg); }
+.filter-details[open] > summary { border-bottom: 1px solid var(--line); }
+.filter-details > summary:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.filter-details .filter-bar { padding: 14px; margin-bottom: 0; border: 0; background: transparent; }
+
+@media (min-width: 900px) {
+  /* Plenty of room on a laptop — no reason to hide the filters there. The
+     summary is hidden, so the form must show whether or not [open] is set. */
+  .filter-details > summary { display: none; }
+  .filter-details { border: 0; background: transparent; }
+  .filter-details .filter-bar { padding: 0; }
+  .filter-details > .filter-bar { display: grid; }
+  .filter-details:not([open]) > .filter-bar { display: grid; }
+}
+
+@media print { .filter-details { display: none; } }
+
+/* ---- Phone-width product/coupon tables -------------------------------
+   At 390px the row actions stacked into a 4-button column, which pushed rows
+   to 218px tall and the table past the screen. On a phone the row carries the
+   primary action only; everything else lives one tap away in the editor. */
+@media (max-width: 640px) {
+  /* The products table opens with an image thumbnail — the least informative
+     30px on the row. Scoped to that table only: on the coupons table the first
+     column is the code itself, which must never be hidden. */
+  .table-products thead th:first-child,
+  .table-products tbody td:first-child { display: none; }
+
+  .admin-table .row-actions { display: block; }
+  .admin-table .row-actions > * + * { display: none; }
+  .admin-table .row-actions > *:first-child { width: 100%; white-space: nowrap; padding-inline: 8px; }
+  /* Long values — product names and item-scoped coupon codes like
+     10OFFYORKSHIRETEA — wrap rather than widening the table off-screen. */
+  .admin-table td { word-break: break-word; }
+  .admin-table td a { word-break: break-word; }
+  .admin-table { table-layout: auto; width: 100%; }
+
+  .admin-table td, .admin-table th { padding: 10px 5px; }
+  .admin-table input[type="number"] { width: 60px; min-width: 0; padding-inline: 2px; }
+  .admin-table .pill, .admin-table .badge-source { font-size: .7rem; padding: 2px 6px; }
+  .admin-table td { vertical-align: middle; }
+}
+
+/* Content that replaces a column hidden at phone width (e.g. the order date,
+   folded under the customer name once the Date column drops away). */
+.show-when-narrow { display: none; }
+@media (max-width: 640px) { .show-when-narrow { display: block; } }

@@ -129,7 +129,7 @@ storefront.get('/', async (c) => {
   return c.html(
     <Layout
       title="27beauty — everyday brands, everyday prices"
-      description="Everyday beauty brands at everyday prices, dispatched from the UK. Scanned a QR card? Get 10% off your first order here."
+      description="Everyday brands at everyday prices — pet food, snacks, coffee, toys, beauty, DIY and garden, dispatched from the UK. Scanned a QR card? Get 10% off here."
       categories={categories}
       cartCount={c.get('cartCount')}
       canonical={canonicalUrl(c.env, '/')}
@@ -138,7 +138,8 @@ storefront.get('/', async (c) => {
       <section class="hero">
         <h1>Everyday brands. Everyday prices.</h1>
         <p>
-          27beauty ships genuine, everyday beauty and personal care brands straight from the UK. Bought
+          27beauty ships genuine everyday brands straight from the UK — pet food, snacks, coffee and
+          tea, toys and games, beauty and grooming, DIY, garden and household. Bought
           from us on a marketplace before? Your QR card is worth 10% off right here.
         </p>
         <a class="btn btn-accent" href="/shop">
@@ -297,7 +298,7 @@ storefront.get('/shop', async (c) =>
   renderListing(c, {
     basePath: '/shop',
     title: 'Shop all products',
-    description: 'Browse every product at 27beauty — everyday beauty brands, dispatched from the UK.',
+    description: 'Browse every product at 27beauty — everyday brands across food, drink, pet, home, garden and beauty, dispatched from the UK.',
     activeCategory: 'all',
     emptyTitle: 'No products yet',
     emptyMessage: "We're still stocking the shelves here — check back soon.",
@@ -1118,7 +1119,8 @@ storefront.get('/pages/:slug', async (c) => {
         <>
           <h1>About 27beauty</h1>
           <p>
-            27beauty is a small, independent UK retailer of everyday beauty and personal care brands. We started
+            27beauty is a small, independent UK retailer of everyday branded goods — from pet food and
+            snacks to coffee, toys, DIY, garden and beauty. We started
             out selling on marketplaces, and built this site so the customers we'd already served could shop
             with us directly — with the same genuine products, dispatched from the same UK stock.
           </p>

@@ -69,8 +69,9 @@ coupons.get('/', async (c) => {
         </div>
       </div>
 
-      <div class="admin-panel">
-        <h3>Bulk-generate single-use codes</h3>
+      <details class="filter-details">
+        <summary>Bulk-generate single-use codes</summary>
+        <div class="admin-panel">
         <form method="post" action="/admin/coupons/generate" class="admin-grid cols-3">
           <CsrfField token={admin.csrf} />
           <div class="field">
@@ -103,6 +104,7 @@ coupons.get('/', async (c) => {
           </div>
         </form>
       </div>
+      </details>
 
       {batches.size ? (
         <div class="admin-panel">
@@ -125,8 +127,8 @@ coupons.get('/', async (c) => {
               <th>Value</th>
               <th>Applies to</th>
               <th class="col-optional">Batch</th>
-              <th class="num">Used</th>
-              <th>Expiry</th>
+              <th class="num col-optional">Used</th>
+              <th class="col-optional">Expiry</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
@@ -150,11 +152,11 @@ coupons.get('/', async (c) => {
                     )}
                   </td>
                   <td class="faint col-optional">{coupon.batch ?? '—'}</td>
-                  <td class="num">
+                  <td class="num col-optional">
                     {coupon.times_used}
                     {coupon.max_redemptions !== null ? ` / ${coupon.max_redemptions}` : ''}
                   </td>
-                  <td class="faint">{coupon.expires_at ?? 'never'}</td>
+                  <td class="faint col-optional">{coupon.expires_at ?? 'never'}</td>
                   <td>
                     <span class={`pill ${status.cls}`}>{status.label}</span>
                   </td>
