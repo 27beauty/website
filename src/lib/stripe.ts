@@ -143,5 +143,3 @@ export async function createCheckoutSession(
     cancel_url: `${siteUrl}/checkout/cancelled`,
   });
 }
-
-export type { Stripe };

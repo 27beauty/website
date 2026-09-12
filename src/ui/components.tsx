@@ -30,14 +30,10 @@ export const PriceBlock: FC<{
 }> = ({ pricePence, compareAtPence, size }) => {
   const pct = discountPercent(pricePence, compareAtPence ?? null);
   return (
-    <div class={size === 'lg' ? 'price-row' : 'price-row'}>
+    <div class="price-row">
       <span class={size === 'lg' ? 'price-lg' : 'price'}>{formatPence(pricePence)}</span>
-      {pct ? (
-        <>
-          <span class="price-was">{formatPence(compareAtPence as number)}</span>
-          <span class="pill pill-warn">Save {pct}%</span>
-        </>
-      ) : null}
+      {pct ? <span class="price-was">{formatPence(compareAtPence as number)}</span> : null}
+      {pct && size === 'lg' ? <span class="pill pill-warn">Save {pct}%</span> : null}
     </div>
   );
 };
