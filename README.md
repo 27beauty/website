@@ -99,6 +99,7 @@ nameservers; the certificate is issued automatically.
   `STRIPE_WEBHOOK_SECRET`.
 - **eBay**: see **[docs/ebay-setup.md](docs/ebay-setup.md)**.
 - **QR cards**: see **[docs/qr-coupons.md](docs/qr-coupons.md)**.
+- **Running the shop day to day**: see **[docs/admin-guide.md](docs/admin-guide.md)**.
 
 ---
 
