@@ -35,9 +35,22 @@ export function randomCode(length = 4, alphabet = COUPON_ALPHABET): string {
   return out;
 }
 
-/** A single "27B-K7XQ" style coupon code. */
+/**
+ * A single coupon code, stored in its canonical form: uppercase letters and
+ * digits only, no separator. `normaliseCouponCode` strips punctuation before
+ * every lookup, so a stored "27B-K7XQ" could never be found again — the dash
+ * belongs to the printed card, not the database. Use `formatCouponCode` to
+ * render it.
+ */
 export function generateCouponCode(prefix = '27B'): string {
-  return `${prefix}-${randomCode(4)}`;
+  return `${prefix}${randomCode(4)}`;
+}
+
+/** Print/display form of a stored code: "27BK7XQ" reads as "27B-K7XQ". */
+export function formatCouponCode(code: string, prefix = '27B'): string {
+  return code.startsWith(prefix) && code.length > prefix.length
+    ? `${prefix}-${code.slice(prefix.length)}`
+    : code;
 }
 
 /**
@@ -66,12 +79,17 @@ export function renderQrSvg(content: string, size = 240): string {
   const clamped = Math.min(Math.max(Math.round(size) || 240, 48), 2048);
   const qr = new QRCodeGenerator({
     content,
-    padding: 1,
+    // 4 modules of quiet zone is what ISO/IEC 18004 requires — printed cards
+    // with a thinner border are the single most common cause of a QR that
+    // "sometimes" scans. Error correction Q tolerates a scuffed or
+    // ink-starved card in a parcel; the URL is short enough that the extra
+    // redundancy costs almost nothing.
+    padding: 4,
     width: clamped,
     height: clamped,
     color: '#1b1620',
     background: '#ffffff',
-    ecl: 'M',
+    ecl: 'Q',
   });
   return qr.svg();
 }

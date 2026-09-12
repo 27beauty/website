@@ -1,5 +1,175 @@
 import { Hono } from 'hono';
-import type { AppBindings } from '../../types';
+import type { AppBindings, SyncRun } from '../../types';
+import { auth } from './auth';
+import { products } from './products';
+import { categories } from './categories';
+import { media } from './media';
+import { orders } from './orders';
+import { coupons } from './coupons';
+import { settings } from './settings';
+import { getAdmin, requireAdmin } from '../../lib/admin-auth';
+import { AdminLayout } from '../../ui/admin-layout';
+import { formatPence } from '../../lib/money';
 
 /** Admin panel: auth, dashboard, products, orders, coupons, settings, sync. */
 export const admin = new Hono<AppBindings>();
+
+// Mounted BEFORE requireAdmin so they work with no session:
+//  - /login, /setup, /logout (auth.tsx)
+//  - /media/:key — uploaded product photos, which the storefront must also load
+admin.route('/', auth);
+admin.route('/media', media);
+
+admin.use('*', requireAdmin);
+
+interface OrderStats {
+  today_revenue: number;
+  today_orders: number;
+  revenue_30d: number;
+  orders_30d: number;
+}
+
+interface ProductStats {
+  active_total: number;
+  out_of_stock: number;
+  low_stock: number;
+}
+
+admin.get('/', async (c) => {
+  const session = getAdmin(c);
+  const flash = { msg: c.req.query('msg') ?? null, err: c.req.query('err') ?? null };
+
+  const [orderStats, awaitingRow, productStats, lastSync, lowStockRows] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT
+         COALESCE(SUM(CASE WHEN date(created_at) = date('now') THEN total_pence ELSE 0 END), 0) AS today_revenue,
+         COALESCE(SUM(CASE WHEN date(created_at) = date('now') THEN 1 ELSE 0 END), 0) AS today_orders,
+         COALESCE(SUM(CASE WHEN created_at >= datetime('now', '-30 days') THEN total_pence ELSE 0 END), 0) AS revenue_30d,
+         COALESCE(SUM(CASE WHEN created_at >= datetime('now', '-30 days') THEN 1 ELSE 0 END), 0) AS orders_30d
+       FROM orders WHERE status IN ('paid', 'fulfilled')`,
+    ).first<OrderStats>(),
+    c.env.DB.prepare("SELECT COUNT(*) AS n FROM orders WHERE status = 'paid'").first<{ n: number }>(),
+    c.env.DB.prepare(
+      `SELECT
+         COUNT(*) AS active_total,
+         COALESCE(SUM(CASE WHEN stock = 0 THEN 1 ELSE 0 END), 0) AS out_of_stock,
+         COALESCE(SUM(CASE WHEN stock > 0 AND stock <= 3 THEN 1 ELSE 0 END), 0) AS low_stock
+       FROM products WHERE status = 'active'`,
+    ).first<ProductStats>(),
+    c.env.DB.prepare('SELECT * FROM sync_runs ORDER BY started_at DESC LIMIT 1').first<SyncRun>(),
+    c.env.DB.prepare(
+      `SELECT title, stock, id FROM products WHERE status = 'active' AND stock <= 3 ORDER BY stock ASC, title ASC LIMIT 8`,
+    ).all<{ title: string; stock: number; id: number }>(),
+  ]);
+
+  const stats: OrderStats = orderStats ?? { today_revenue: 0, today_orders: 0, revenue_30d: 0, orders_30d: 0 };
+  const pStats: ProductStats = productStats ?? { active_total: 0, out_of_stock: 0, low_stock: 0 };
+  const awaiting = awaitingRow?.n ?? 0;
+
+  return c.html(
+    <AdminLayout title="Dashboard" active="dashboard" admin={session} msg={flash.msg} err={flash.err}>
+      <div class="admin-head">
+        <h1>Welcome back{session.name ? `, ${session.name}` : ''}</h1>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-tile">
+          <div class="stat-label">Today's revenue</div>
+          <div class="stat-value">{formatPence(stats.today_revenue)}</div>
+          <div class="stat-sub">{stats.today_orders} paid order{stats.today_orders === 1 ? '' : 's'}</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label">Last 30 days</div>
+          <div class="stat-value">{formatPence(stats.revenue_30d)}</div>
+          <div class="stat-sub">{stats.orders_30d} paid order{stats.orders_30d === 1 ? '' : 's'}</div>
+        </div>
+        <div class={`stat-tile ${awaiting > 0 ? 'stat-warn' : ''}`}>
+          <div class="stat-label">Awaiting fulfilment</div>
+          <div class="stat-value">{awaiting}</div>
+          <div class="stat-sub">
+            <a href="/admin/orders?status=paid">View orders →</a>
+          </div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label">Active products</div>
+          <div class="stat-value">{pStats.active_total}</div>
+        </div>
+        <div class={`stat-tile ${pStats.low_stock > 0 ? 'stat-warn' : ''}`}>
+          <div class="stat-label">Low stock (≤3)</div>
+          <div class="stat-value">{pStats.low_stock}</div>
+        </div>
+        <div class={`stat-tile ${pStats.out_of_stock > 0 ? 'stat-bad' : ''}`}>
+          <div class="stat-label">Out of stock</div>
+          <div class="stat-value">{pStats.out_of_stock}</div>
+        </div>
+      </div>
+
+      <div class="quick-links">
+        <a class="btn btn-secondary" href="/admin/products/new">
+          + New product
+        </a>
+        <a class="btn btn-secondary" href="/admin/orders?status=paid">
+          Orders to fulfil
+        </a>
+        <a class="btn btn-secondary" href="/admin/coupons/new">
+          + New coupon
+        </a>
+        <a class="btn btn-secondary" href="/admin/coupons/poster">
+          QR10 poster
+        </a>
+        <a class="btn btn-secondary" href="/admin/settings">
+          Settings
+        </a>
+      </div>
+
+      <div class="admin-grid cols-2">
+        <div class="admin-panel">
+          <h3>Low &amp; out of stock</h3>
+          {(lowStockRows.results ?? []).length ? (
+            <ul style="margin:0;padding-left:18px;">
+              {(lowStockRows.results ?? []).map((p) => (
+                <li>
+                  <a href={`/admin/products/${p.id}`}>{p.title}</a> — {p.stock === 0 ? <strong>out of stock</strong> : `${p.stock} left`}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p class="muted">Everything is well stocked.</p>
+          )}
+          <p style="margin-top:10px;">
+            <a href="/admin/products?lowStock=1">See all low-stock products →</a>
+          </p>
+        </div>
+
+        <div class="admin-panel">
+          <h3>Last eBay sync</h3>
+          {lastSync ? (
+            <>
+              <p>
+                <span class={`pill ${lastSync.status === 'ok' ? 'pill-ok' : lastSync.status === 'error' ? 'pill-bad' : 'pill-warn'}`}>
+                  {lastSync.status}
+                </span>{' '}
+                <span class="faint">{lastSync.started_at}</span>
+              </p>
+              <p class="muted">
+                {lastSync.created_count} created · {lastSync.updated_count} updated · {lastSync.ended_count} ended
+              </p>
+              {lastSync.message ? <p class="faint">{lastSync.message}</p> : null}
+            </>
+          ) : (
+            <p class="muted">No sync has run yet.</p>
+          )}
+          <p style="margin-top:10px;">
+            <a href="/admin/settings">Manage eBay accounts →</a>
+          </p>
+        </div>
+      </div>
+    </AdminLayout>,
+  );
+});
+
+admin.route('/products', products);
+admin.route('/categories', categories);
+admin.route('/orders', orders);
+admin.route('/coupons', coupons);
+admin.route('/settings', settings);

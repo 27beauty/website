@@ -7,16 +7,10 @@ import { formatPence, penceToInput } from '../../lib/money';
 import { clampInt, parseJsonArray, poundsToPence, uniqueSlug } from '../../lib/util';
 import { randomToken } from '../../lib/crypto';
 
-/** Product catalogue: list, editor, image upload, CSV import/export. */
+/** Product catalogue: list, editor, image upload, CSV import/export.
+ * Categories live in ./categories.tsx and the R2 media route in ./media.tsx —
+ * split out so each file exports exactly one Hono app, per CLAUDE.md. */
 export const products = new Hono<AppBindings>();
-
-/** Separate categories sub-app, mounted at /admin/categories by index.tsx. */
-export const categories = new Hono<AppBindings>();
-
-/** Serves uploaded product images from R2. Mounted PUBLIC (before requireAdmin)
- * in index.tsx at /admin/media, since product photos need to load on the
- * storefront too — see the note in the final report about a public alias. */
-export const media = new Hono<AppBindings>();
 
 const PER_PAGE = 30;
 
@@ -1040,188 +1034,12 @@ products.post('/:id/image', async (c) => {
   const ext = IMAGE_EXT[file.type] ?? 'jpg';
   const key = `products/${id}/${randomToken(8)}.${ext}`;
   await c.env.MEDIA.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: file.type } });
+  // Stored under the public /media/ route (src/index.tsx), not /admin/media —
+  // robots.txt disallows /admin, and product photos need to be crawlable.
   await c.env.DB.prepare("UPDATE products SET image_url = ?, updated_at = datetime('now') WHERE id = ?")
-    .bind(`/admin/media/${key}`, id)
+    .bind(`/media/${key}`, id)
     .run();
   return c.redirect(`/admin/products/${id}?msg=${encodeURIComponent('Image uploaded.')}`, 303);
-});
-
-media.get('/:key{.+}', async (c) => {
-  const key = c.req.param('key');
-  const obj = await c.env.MEDIA.get(key);
-  if (!obj) return c.text('Not found', 404);
-  const headers = new Headers();
-  obj.writeHttpMetadata(headers);
-  headers.set('etag', obj.httpEtag);
-  headers.set('cache-control', 'public, max-age=31536000, immutable');
-  return new Response(obj.body, { headers });
-});
-
-/* ---------------------------------------------------------------------- */
-/* Categories                                                              */
-/* ---------------------------------------------------------------------- */
-
-categories.get('/', async (c) => {
-  const admin = getAdmin(c);
-  const flash = flashOf(c);
-  const cats = await listCategories(c.env);
-  return c.html(
-    <AdminLayout title="Categories" active="products" admin={admin} msg={flash.msg} err={flash.err}>
-      <div class="admin-head">
-        <h1>Categories</h1>
-        <a class="btn btn-secondary" href="/admin/products">
-          ← Back to products
-        </a>
-      </div>
-
-      <div class="admin-panel">
-        <h3>New category</h3>
-        <form method="post" action="/admin/categories" class="admin-grid cols-3">
-          <CsrfField token={admin.csrf} />
-          <div class="field">
-            <label for="name">Name</label>
-            <input id="name" name="name" type="text" required />
-          </div>
-          <div class="field">
-            <label for="emoji">Emoji</label>
-            <input id="emoji" name="emoji" type="text" maxlength={4} placeholder="🛍️" />
-          </div>
-          <div class="field" style="align-self:end;">
-            <button class="btn" type="submit">
-              Add category
-            </button>
-          </div>
-        </form>
-      </div>
-
-      <div class="admin-table-wrap">
-        <table class="admin-table">
-          <thead>
-            <tr>
-              <th>Order</th>
-              <th>Name</th>
-              <th>Slug</th>
-              <th class="num">Products</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {cats.map((cat, i) => (
-              <tr>
-                <td class="nowrap">
-                  <form method="post" action={`/admin/categories/${cat.id}/reorder`} style="display:inline;">
-                    <CsrfField token={admin.csrf} />
-                    <input type="hidden" name="dir" value="up" />
-                    <button class="btn btn-sm btn-secondary" type="submit" disabled={i === 0}>
-                      ↑
-                    </button>
-                  </form>
-                  <form method="post" action={`/admin/categories/${cat.id}/reorder`} style="display:inline;">
-                    <CsrfField token={admin.csrf} />
-                    <input type="hidden" name="dir" value="down" />
-                    <button class="btn btn-sm btn-secondary" type="submit" disabled={i === cats.length - 1}>
-                      ↓
-                    </button>
-                  </form>
-                </td>
-                <td>
-                  <form method="post" action={`/admin/categories/${cat.id}/rename`} class="row" style="gap:6px;">
-                    <CsrfField token={admin.csrf} />
-                    <input type="text" name="name" value={cat.name} style="min-width:160px;" />
-                    <input type="text" name="emoji" value={cat.emoji ?? ''} style="width:52px;" />
-                    <button class="btn btn-sm btn-secondary" type="submit">
-                      Save
-                    </button>
-                  </form>
-                </td>
-                <td class="faint">{cat.slug}</td>
-                <td class="num">
-                  {/* product_count intentionally not pre-joined to keep this page to one main query */}
-                  —
-                </td>
-                <td>
-                  <form method="post" action={`/admin/categories/${cat.id}/delete`}>
-                    <CsrfField token={admin.csrf} />
-                    <button class="btn btn-sm btn-danger" type="submit">
-                      Delete
-                    </button>
-                  </form>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p class="field-hint">A category can only be deleted once no products use it.</p>
-    </AdminLayout>,
-  );
-});
-
-categories.post('/', async (c) => {
-  const body = await c.req.parseBody();
-  if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
-    return c.redirect('/admin/categories?err=' + encodeURIComponent('Your session expired — please try again.'), 303);
-  }
-  const name = typeof body.name === 'string' ? body.name.trim() : '';
-  const emoji = typeof body.emoji === 'string' ? body.emoji.trim() : '';
-  if (!name) return c.redirect('/admin/categories?err=' + encodeURIComponent('Name is required.'), 303);
-  const slug = await uniqueSlug(c.env.DB, 'categories', name);
-  const maxRow = await c.env.DB.prepare('SELECT COALESCE(MAX(sort_order), 0) AS n FROM categories').first<{ n: number }>();
-  await c.env.DB.prepare('INSERT INTO categories (slug, name, emoji, sort_order) VALUES (?,?,?,?)')
-    .bind(slug, name, emoji || null, (maxRow?.n ?? 0) + 10)
-    .run();
-  return c.redirect('/admin/categories?msg=' + encodeURIComponent('Category added.'), 303);
-});
-
-categories.post('/:id/rename', async (c) => {
-  const id = Number(c.req.param('id'));
-  const body = await c.req.parseBody();
-  if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
-    return c.redirect('/admin/categories?err=' + encodeURIComponent('Your session expired — please try again.'), 303);
-  }
-  const name = typeof body.name === 'string' ? body.name.trim() : '';
-  const emoji = typeof body.emoji === 'string' ? body.emoji.trim() : '';
-  if (!name) return c.redirect('/admin/categories?err=' + encodeURIComponent('Name is required.'), 303);
-  await c.env.DB.prepare('UPDATE categories SET name = ?, emoji = ? WHERE id = ?')
-    .bind(name, emoji || null, id)
-    .run();
-  return c.redirect('/admin/categories?msg=' + encodeURIComponent('Category updated.'), 303);
-});
-
-categories.post('/:id/reorder', async (c) => {
-  const id = Number(c.req.param('id'));
-  const body = await c.req.parseBody();
-  if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
-    return c.redirect('/admin/categories?err=' + encodeURIComponent('Your session expired — please try again.'), 303);
-  }
-  const dir = body.dir === 'up' ? 'up' : 'down';
-  const all = await listCategories(c.env);
-  const idx = all.findIndex((cat) => cat.id === id);
-  const swapIdx = dir === 'up' ? idx - 1 : idx + 1;
-  if (idx < 0 || swapIdx < 0 || swapIdx >= all.length) return c.redirect('/admin/categories', 303);
-  const a = all[idx];
-  const b = all[swapIdx];
-  await c.env.DB.batch([
-    c.env.DB.prepare('UPDATE categories SET sort_order = ? WHERE id = ?').bind(b.sort_order, a.id),
-    c.env.DB.prepare('UPDATE categories SET sort_order = ? WHERE id = ?').bind(a.sort_order, b.id),
-  ]);
-  return c.redirect('/admin/categories', 303);
-});
-
-categories.post('/:id/delete', async (c) => {
-  const id = Number(c.req.param('id'));
-  const body = await c.req.parseBody();
-  if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
-    return c.redirect('/admin/categories?err=' + encodeURIComponent('Your session expired — please try again.'), 303);
-  }
-  const inUse = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM products WHERE category_id = ?')
-    .bind(id)
-    .first<{ n: number }>();
-  if ((inUse?.n ?? 0) > 0) {
-    return c.redirect('/admin/categories?err=' + encodeURIComponent('Move or reassign its products before deleting.'), 303);
-  }
-  await c.env.DB.prepare('DELETE FROM categories WHERE id = ?').bind(id).run();
-  return c.redirect('/admin/categories?msg=' + encodeURIComponent('Category deleted.'), 303);
 });
 
 /* ---------------------------------------------------------------------- */
@@ -1229,7 +1047,8 @@ categories.post('/:id/delete', async (c) => {
 /* ---------------------------------------------------------------------- */
 
 /** Minimal RFC4180-ish CSV parser: quoted fields, "" escapes, CRLF or LF. */
-export function parseCsv(text: string): string[][] {
+export function parseCsv(input: string): string[][] {
+  const text = input.trim();
   const rows: string[][] = [];
   let row: string[] = [];
   let field = '';

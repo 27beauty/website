@@ -1,14 +1,15 @@
 import { Hono } from 'hono';
-import type { AppBindings, Order, OrderItem, OrderStatus, ShippingAddress } from '../../types';
+import type { AppBindings, Order, OrderStatus, ShippingAddress } from '../../types';
 import { getAdmin, verifyCsrf } from '../../lib/admin-auth';
 import { AdminLayout, AdminPrintPage, CsrfField } from '../../ui/admin-layout';
 import { formatPence } from '../../lib/money';
 import { clampInt } from '../../lib/util';
+import { getOrderWithItems, type OrderWithItems } from '../../lib/orders';
 
 /**
- * Order management. lib/orders.ts (payments agent) did not exist yet at the
- * time this file was written, so queries live here rather than importing a
- * module that isn't there — see CLAUDE.md notes in the final report.
+ * Order management. Listing needs a status + free-text (order number/email)
+ * search that src/lib/orders.ts's listOrders() doesn't offer, so the list
+ * query lives here; order detail reuses getOrderWithItems() from there.
  */
 export const orders = new Hono<AppBindings>();
 
@@ -155,13 +156,13 @@ orders.get('/', async (c) => {
   );
 });
 
-async function loadOrder(env: AppBindings['Bindings'], id: number) {
-  const order = await env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first<Order>();
+async function loadOrder(
+  env: AppBindings['Bindings'],
+  id: number,
+): Promise<{ order: OrderWithItems; items: OrderWithItems['items'] } | null> {
+  const order = await getOrderWithItems(env, id);
   if (!order) return null;
-  const { results: items } = await env.DB.prepare('SELECT * FROM order_items WHERE order_id = ? ORDER BY id ASC')
-    .bind(id)
-    .all<OrderItem>();
-  return { order, items: items ?? [] };
+  return { order, items: order.items };
 }
 
 orders.get('/:id', async (c) => {
