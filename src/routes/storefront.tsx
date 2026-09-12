@@ -768,38 +768,64 @@ async function qrLanding(c: Context<AppBindings>, codeRaw: string) {
   const code = codeRaw.trim();
   let notice: { message: string; kind: 'ok' | 'bad' } | null = null;
 
-  if (code) {
-    const check = await validateCoupon(c.env, code, 0);
-    if (check.coupon) {
-      writeCouponCode(c, normaliseCouponCode(code));
-      notice = {
-        kind: 'ok',
-        message: `Code ${check.coupon.code} is applied to your basket — it'll come off your total at checkout.`,
-      };
-    } else {
-      notice = {
-        kind: 'bad',
-        message: check.error ?? "We couldn't recognise that code, but you're still welcome to shop below.",
-      };
-    }
+  // The basket is empty at this point, so the minimum-spend rule is not a
+  // reason to reject the card — it becomes a hint further down instead.
+  const check = code
+    ? await validateCoupon(c.env, code, 0, null, { ignoreMinSpend: true })
+    : null;
+  const coupon = check?.coupon ?? null;
+
+  if (coupon) {
+    writeCouponCode(c, coupon.code);
+    notice = {
+      kind: 'ok',
+      message: `Code ${coupon.code} is saved to your basket — it comes off your total at checkout.`,
+    };
+  } else if (code) {
+    notice = {
+      kind: 'bad',
+      message: check?.error ?? "We couldn't recognise that code, but you're still welcome to shop below.",
+    };
   }
+
+  // The headline has to match the card the customer is holding: the offer is
+  // whatever the coupon actually says, not a hardcoded 10%.
+  const offer = coupon
+    ? coupon.kind === 'percent'
+      ? `${coupon.value}% off`
+      : `${formatPence(coupon.value)} off`
+    : null;
+  const heading = offer ? `🎉 Here's your ${offer}` : 'Welcome to 27beauty';
 
   return c.html(
     <Layout
-      title="Your 10% off code"
-      description="Scanned a 27beauty QR card? Here's your 10% off, ready to use."
+      title={offer ? `Your ${offer} code` : 'Welcome'}
+      description={
+        offer
+          ? `Scanned a 27beauty QR card? Here's your ${offer}, ready to use.`
+          : 'Scanned a 27beauty QR card? Here is the shop.'
+      }
       categories={categories}
       cartCount={c.get('cartCount')}
       canonical={canonicalUrl(c.env, code ? `/qr/${code}` : '/qr')}
       noindex
     >
       <section class="hero center">
-        <h1>🎉 Here's your 10% off</h1>
-        {code ? <p style="font-size:1.6rem;font-weight:700;letter-spacing:.08em;margin-bottom:.4em">{code.toUpperCase()}</p> : null}
+        <h1>{heading}</h1>
+        {coupon ? (
+          <p class="qr-code-display">{coupon.code}</p>
+        ) : null}
         <p>
-          Thanks for shopping with 27beauty. Your discount is now saved to this basket — carry on browsing and
-          it'll come straight off your total at checkout, no need to remember a thing.
+          {coupon
+            ? "Thanks for shopping with 27beauty. Your discount is saved to this basket — carry on browsing and it comes straight off your total at checkout, no need to remember a thing."
+            : 'Thanks for scanning. Browse the shop below — the same products you found on the marketplace, direct from us.'}
         </p>
+        {coupon && coupon.min_spend_pence > 0 ? (
+          <p class="small">Spend {formatPence(coupon.min_spend_pence)} or more to use it.</p>
+        ) : null}
+        {coupon?.expires_at ? (
+          <p class="small">Valid until {coupon.expires_at.slice(0, 10)}.</p>
+        ) : null}
         <a class="btn btn-accent" href="/shop">
           Start shopping
         </a>

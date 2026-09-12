@@ -13,6 +13,30 @@ export interface CouponCheck {
   freeShipping: boolean;
 }
 
+/**
+ * Coupon dates arrive in three shapes: D1's own "YYYY-MM-DD HH:MM:SS", an
+ * admin <input type="date"> ("YYYY-MM-DD") and a datetime-local
+ * ("YYYY-MM-DDTHH:MM"). All are stored and compared as UTC. A date-only
+ * expiry means the END of that day, so a card marked "valid until 31 Dec" works
+ * all day on the 31st.
+ */
+export function parseCouponBoundary(value: string | null, edge: 'start' | 'end'): number | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return Date.parse(`${trimmed}T${edge === 'end' ? '23:59:59' : '00:00:00'}Z`);
+  }
+
+  const normalised = trimmed.replace(' ', 'T');
+  const withSeconds = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(normalised)
+    ? `${normalised}:00`
+    : normalised;
+  const parsed = Date.parse(/[Zz]|[+-]\d{2}:\d{2}$/.test(withSeconds) ? withSeconds : `${withSeconds}Z`);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export async function findCoupon(env: Env, code: string): Promise<Coupon | null> {
   const normalised = normaliseCouponCode(code);
   if (!normalised) return null;
@@ -31,6 +55,15 @@ export function computeDiscount(coupon: Coupon, subtotalPence: number): number {
   return Math.min(raw, subtotalPence);
 }
 
+export interface ValidateOptions {
+  /**
+   * Skips the minimum-spend rule. Used by the QR landing page, where the
+   * basket is still empty: the code is genuinely valid, the shopper simply has
+   * not put anything in the basket yet.
+   */
+  ignoreMinSpend?: boolean;
+}
+
 /**
  * Validates a code against the current basket. `email` is optional and only
  * used to enforce a per-customer limit at checkout time.
@@ -40,6 +73,7 @@ export async function validateCoupon(
   code: string | null | undefined,
   subtotalPence: number,
   email?: string | null,
+  options: ValidateOptions = {},
 ): Promise<CouponCheck> {
   const empty: CouponCheck = { coupon: null, discountPence: 0, freeShipping: false };
   if (!code) return empty;
@@ -49,16 +83,18 @@ export async function validateCoupon(
   if (!coupon.active) return { ...empty, error: 'That code is no longer active.' };
 
   const now = Date.now();
-  if (coupon.starts_at && Date.parse(coupon.starts_at.replace(' ', 'T') + 'Z') > now) {
+  const startsAt = parseCouponBoundary(coupon.starts_at, 'start');
+  const expiresAt = parseCouponBoundary(coupon.expires_at, 'end');
+  if (startsAt !== null && startsAt > now) {
     return { ...empty, error: 'That code is not active yet.' };
   }
-  if (coupon.expires_at && Date.parse(coupon.expires_at.replace(' ', 'T') + 'Z') < now) {
+  if (expiresAt !== null && expiresAt < now) {
     return { ...empty, error: 'That code has expired.' };
   }
   if (coupon.max_redemptions !== null && coupon.times_used >= coupon.max_redemptions) {
     return { ...empty, error: 'That code has already been used.' };
   }
-  if (subtotalPence < coupon.min_spend_pence) {
+  if (!options.ignoreMinSpend && subtotalPence < coupon.min_spend_pence) {
     return {
       ...empty,
       error: `Spend at least £${(coupon.min_spend_pence / 100).toFixed(2)} to use this code.`,
