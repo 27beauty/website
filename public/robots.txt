@@ -1,0 +1,7 @@
+User-agent: *
+Disallow: /admin
+Disallow: /checkout
+Disallow: /cart
+Allow: /
+
+Sitemap: https://27beauty.co.uk/sitemap.xml

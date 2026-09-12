@@ -1,0 +1,42 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "27beauty"
+main = "src/index.tsx"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# Static files (CSS, favicon, robots.txt). Anything that does not match a file
+# here falls through to the Worker in src/index.ts.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+# Product catalogue, orders, coupons, settings.
+[[d1_databases]]
+binding = "DB"
+database_name = "27beauty"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+# Admin sessions, eBay OAuth tokens, short-lived caches.
+[[kv_namespaces]]
+binding = "KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# Product images uploaded through the admin panel.
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "27beauty-media"
+
+# eBay sync runs every 30 minutes.
+[triggers]
+crons = ["*/30 * * * *"]
+
+[vars]
+SITE_NAME = "27beauty"
+SITE_URL = "https://27beauty.co.uk"
+SUPPORT_EMAIL = "hello@27beauty.co.uk"
+CURRENCY = "GBP"
+# Free delivery at or above this order value (pence). 0 disables the threshold.
+FREE_SHIPPING_THRESHOLD_PENCE = "3000"
+SHIPPING_FLAT_PENCE = "349"

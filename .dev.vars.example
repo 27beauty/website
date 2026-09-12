@@ -1,0 +1,19 @@
+# Copy to .dev.vars for local development (never commit .dev.vars).
+# In production set these with: wrangler secret put <NAME>
+
+# Signs admin session and cart cookies. Generate: openssl rand -hex 32
+SESSION_SECRET="dev-secret-change-me-0000000000000000"
+
+# Stripe (test keys locally)
+STRIPE_SECRET_KEY="sk_test_..."
+STRIPE_WEBHOOK_SECRET="whsec_..."
+
+# eBay developer application (https://developer.ebay.com) — production keyset
+EBAY_CLIENT_ID="..."
+EBAY_CLIENT_SECRET="..."
+# Optional: only needed for the Sell APIs (live stock/price on accounts you own).
+EBAY_REFRESH_TOKEN=""
+EBAY_REFRESH_TOKEN_2=""
+
+# Protects POST /api/sync/ebay when called from outside the admin panel.
+SYNC_TOKEN="dev-sync-token"
