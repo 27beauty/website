@@ -31,6 +31,9 @@ monthly floor cost.
 - **Stripe Checkout** — card payments (no card data ever touches this app)
 - **Cron Triggers** — the eBay sync, every 30 minutes
 
+Picking this up fresh? Start with **[HANDOFF.md](HANDOFF.md)** — current state,
+what's left, and the traps.
+
 ## Repository layout
 
 ```
