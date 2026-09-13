@@ -9,7 +9,9 @@ INSERT INTO categories (slug, name, description, emoji, sort_order) VALUES
   ('diy-tools',          'DIY & Tools',              'Tools, fixings, decorating and hardware.',             '🔧', 60),
   ('breakfast-bars',     'Breakfast & Cereal Bars',  'Cereals, porridge, breakfast and cereal bars.',         '🥣', 70),
   ('household-appliances','Household Appliances',    'Small appliances and household essentials.',            '🔌', 80),
-  ('garden',             'Garden',                   'Garden tools, growing, outdoor living.',               '🪴', 90)
+  ('home-living',        'Home & Living',            'Bedding, candles, air care and everyday home bits.',    '🕯️', 85),
+  ('garden',             'Garden',                   'Garden tools, growing, outdoor living.',               '🪴', 90),
+  ('electronics',        'Electronics & Tech',       'Computing, printing and gadget essentials.',            '💻', 95)
 ON CONFLICT(slug) DO UPDATE SET
   name = excluded.name,
   description = excluded.description,
@@ -38,51 +40,7 @@ INSERT INTO coupons (code, kind, value, description, min_spend_pence, active, ba
 VALUES ('QR10', 'percent', 10, '10% off — QR card included with marketplace orders', 0, 1, 'qr-cards')
 ON CONFLICT(code) DO NOTHING;
 
--- Keyword rules used to file incoming eBay listings into categories.
-DELETE FROM ebay_category_map WHERE match_type = 'keyword';
-WITH rules(word, cat, priority) AS (
-  VALUES
-    ('dog', 'pet-food-treats', 100),
-    ('cat food', 'pet-food-treats', 100),
-    ('kitten', 'pet-food-treats', 90),
-    ('puppy', 'pet-food-treats', 90),
-    ('pet', 'pet-food-treats', 60),
-    ('board game', 'toys-games', 100),
-    ('jigsaw', 'toys-games', 90),
-    ('puzzle', 'toys-games', 80),
-    ('lego', 'toys-games', 90),
-    ('toy', 'toys-games', 60),
-    ('coffee', 'coffee-tea', 100),
-    ('tea bags', 'coffee-tea', 100),
-    ('espresso', 'coffee-tea', 90),
-    ('shampoo', 'hair-beauty', 100),
-    ('conditioner', 'hair-beauty', 90),
-    ('razor', 'hair-beauty', 90),
-    ('moisturiser', 'hair-beauty', 90),
-    ('shower gel', 'hair-beauty', 90),
-    ('perfume', 'hair-beauty', 80),
-    ('crisps', 'snacks-sweets', 100),
-    ('chocolate', 'snacks-sweets', 100),
-    ('sweets', 'snacks-sweets', 100),
-    ('haribo', 'snacks-sweets', 90),
-    ('drill', 'diy-tools', 100),
-    ('screwdriver', 'diy-tools', 90),
-    ('tool', 'diy-tools', 60),
-    ('paint', 'diy-tools', 70),
-    ('cereal bar', 'breakfast-bars', 100),
-    ('porridge', 'breakfast-bars', 90),
-    ('cereal', 'breakfast-bars', 80),
-    ('granola', 'breakfast-bars', 90),
-    ('kettle', 'household-appliances', 100),
-    ('toaster', 'household-appliances', 100),
-    ('air fryer', 'household-appliances', 100),
-    ('vacuum', 'household-appliances', 90),
-    ('garden', 'garden', 100),
-    ('plant', 'garden', 80),
-    ('seeds', 'garden', 90),
-    ('hose', 'garden', 80)
-)
-INSERT INTO ebay_category_map (match_type, match_value, category_id, priority)
-SELECT 'keyword', rules.word, c.id, rules.priority
-FROM rules
-JOIN categories c ON c.slug = rules.cat;
+-- eBay category rules live in db/ebay-category-rules.sql — they are tuned to the
+-- real catalogue (brands as well as product nouns) and are replaced wholesale
+-- rather than appended, so they are kept out of this file:
+--   npx wrangler d1 execute DB --remote --file=./db/ebay-category-rules.sql

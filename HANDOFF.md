@@ -56,7 +56,7 @@ Already created and configured (ids are committed in `wrangler.toml`):
 
 | Resource | Name | State |
 | --- | --- | --- |
-| D1 database | `27beauty` | Created (WEUR). **Schema applied, seeded**: 9 categories, 13 settings, the `QR10` coupon, 39 eBay keyword rules. Both migrations recorded in `d1_migrations`, so `wrangler d1 migrations apply` correctly no-ops |
+| D1 database | `27beauty` | Created (WEUR). **Schema applied, seeded and populated**: 11 categories, 13 settings, the `QR10` coupon, 134 eBay category rules, **90 real products** imported from the owner's two eBay shops, and both shops registered in `ebay_accounts`. Both migrations recorded in `d1_migrations`, so `wrangler d1 migrations apply` correctly no-ops |
 | KV namespace | `27beauty-KV` | Created, bound |
 | R2 bucket | `27beauty-media` | Created, bound, 1 GB self-imposed budget |
 
@@ -92,12 +92,28 @@ In order:
    refund it: confirm the order shows **paid** in `/admin/orders` and stock went
    down by exactly one.
 6. **eBay** — follow `docs/ebay-setup.md`: `EBAY_CLIENT_ID` and
-   `EBAY_CLIENT_SECRET`, add both seller accounts in Admin → Settings, then flip
-   `ebay.sync_enabled` on and press *Sync now*. The seller usernames are **not**
-   in the code — the owner has to supply them. Browse mode works with just app
-   credentials; Sell mode needs a per-account refresh token and gives exact stock.
+   `EBAY_CLIENT_SECRET`, then flip `ebay.sync_enabled` on and press *Sync now*.
+   Both accounts are already registered (**aisha-4515**, 30 listings, and
+   **adinath0**, 60) in browse mode with 0% markup. Browse mode works with just
+   app credentials; Sell mode needs a per-account refresh token and gives exact
+   stock. **The first sync will correct the placeholder stock levels** — the 90
+   imported products were seeded at 5 units each (1 where the listing said "Last
+   one") because the catalogue capture carried no quantities.
 7. **Ask whether the repo should be private.** It is public today. No secrets are
    committed (verified), but the owner may not have intended public.
+
+## About the imported catalogue
+
+The 90 products came from a spreadsheet capture of the owner's two eBay shops
+(`db/ebay-catalogue.sql`), keyed on `ebay_item_id` so the live sync adopts and
+updates them rather than duplicating. Two things to know:
+
+- **Stock figures are placeholders** (5, or 1 for "Last one"). Nothing should be
+  sold in volume until a real sync or a manual pass corrects them.
+- **Images are hotlinked from eBay's CDN** (`i.ebayimg.com`, the `s-l500`
+  variant). That costs no R2 storage, which suits the free-tier constraint, but
+  the URLs die when a listing ends. The sync refreshes them; if a product is
+  delisted the image goes with it.
 
 ## Things that will bite you if you don't know them
 
