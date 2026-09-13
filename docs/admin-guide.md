@@ -25,8 +25,11 @@ low, what has gone out of stock, and when the eBay sync last ran.
 **Products** lists everything, searchable and filterable by category, status,
 source (manual or eBay) and low stock.
 
-- **Stock** — edit the number straight in the list and press *Save changes*. One
-  press saves every row you touched.
+- **Stock** — the **Stock** tab is the fastest route: every product in one list,
+  sorted so anything out of stock or running low is at the top, with what eBay
+  last reported beside your own figure so you can see when the two have drifted
+  apart. Edit the numbers and press *Save stock*. You can also edit stock inline
+  on the Products list.
 - **Add a product** — *New product*. Title, price and stock are the only fields
   that really matter; everything else improves the listing.
 - **Photos** — upload straight from your phone's camera roll. Keep them square
@@ -84,6 +87,16 @@ money in Stripe, which is deliberate: only Stripe can move money.
 
 The full playbook — how many to print, what to write on them, how to protect your
 margin — is in [qr-coupons.md](qr-coupons.md).
+
+## Categories
+
+**Products → Categories** is where you add, rename, reorder or delete
+categories. Order matters: the first category is the first thing a visitor sees,
+both in the top navigation and on the home page. Beauty leads today because it
+is the biggest range and what the brand is known for — move it if that changes.
+
+A category can only be deleted once nothing is filed under it, which stops a
+stray click hiding products.
 
 ## Settings
 

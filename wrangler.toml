@@ -32,9 +32,12 @@ id = "c2bbd1afeb964a1ea6c2fb36138936aa"
 binding = "MEDIA"
 bucket_name = "27beauty-media"
 
-# eBay sync runs every 30 minutes.
+# eBay sync runs every 10 minutes, so a listing created on either eBay account
+# appears on the website within minutes rather than half an hour. That is 144
+# runs a day — a rounding error against the free tier's 100,000 requests, and
+# roughly 600 eBay Browse calls a day against a 5,000/day limit.
 [triggers]
-crons = ["*/30 * * * *"]
+crons = ["*/10 * * * *"]
 
 [vars]
 SITE_NAME = "27beauty"

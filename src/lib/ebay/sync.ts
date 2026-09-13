@@ -175,8 +175,8 @@ async function syncAccount(
       env.DB.prepare(
         `INSERT INTO products
            (slug, title, description, category_id, price_pence, stock, image_url, images_json,
-            status, source, ebay_item_id, ebay_account, ebay_url, ebay_synced_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ebay', ?, ?, ?, datetime('now'))`,
+            status, source, ebay_item_id, ebay_account, ebay_url, ebay_synced_at, ebay_stock)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ebay', ?, ?, ?, datetime('now'), ?)`,
       ).bind(
         slug,
         listing.title,
@@ -190,6 +190,7 @@ async function syncAccount(
         listing.itemId,
         account.label,
         listing.itemWebUrl,
+        listing.stock,
       ),
     );
     created++;
@@ -217,8 +218,17 @@ async function syncAccount(
       sets.push(`${key} = ?`);
       values.push(value);
     }
-    sets.push(`ebay_url = ?`, `ebay_synced_at = datetime('now')`, `updated_at = datetime('now')`);
+    // What eBay reports is always recorded, even when stock_locked stops it
+    // overwriting the owner's own figure — the admin stock screen shows the two
+    // side by side so a mismatch between channels is visible.
+    sets.push(
+      `ebay_url = ?`,
+      `ebay_stock = ?`,
+      `ebay_synced_at = datetime('now')`,
+      `updated_at = datetime('now')`,
+    );
     values.push(listing.itemWebUrl);
+    values.push(listing.stock);
     values.push(product.id);
     statements.push(
       env.DB.prepare(`UPDATE products SET ${sets.join(', ')} WHERE id = ?`).bind(...values),
@@ -230,7 +240,7 @@ async function syncAccount(
     statements.push(
       env.DB.prepare(
         `UPDATE products
-         SET stock = 0, status = 'archived', ebay_synced_at = datetime('now'), updated_at = datetime('now')
+         SET stock = 0, ebay_stock = 0, status = 'archived', ebay_synced_at = datetime('now'), updated_at = datetime('now')
          WHERE id = ?`,
       ).bind(row.id),
     );

@@ -81,6 +81,8 @@ export interface Product {
   ebay_account: string | null;
   ebay_url: string | null;
   ebay_synced_at: string | null;
+  /** Quantity eBay reported at the last sync — null until a sync has run. */
+  ebay_stock: number | null;
   price_locked: number;
   stock_locked: number;
   content_locked: number;

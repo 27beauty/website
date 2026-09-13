@@ -136,11 +136,11 @@ storefront.get('/', async (c) => {
       activeCategory="all"
     >
       <section class="hero">
-        <h1>Everyday brands. Everyday prices.</h1>
+        <h1>Everyday brands, without the marketplace markup.</h1>
         <p>
-          27beauty ships genuine everyday brands straight from the UK — pet food, snacks, coffee and
-          tea, toys and games, beauty and grooming, DIY, garden and household. Bought
-          from us on a marketplace before? Your QR card is worth 10% off right here.
+          Beauty and grooming, pet food, snacks, coffee and tea, toys, DIY, garden and household —
+          genuine brands, shipped from the UK. Buying direct cuts out the marketplace's cut, and your
+          QR card puts 10% of that straight back in your pocket.
         </p>
         <a class="btn btn-accent" href="/shop">
           Shop all products

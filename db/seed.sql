@@ -1,10 +1,10 @@
 -- Reference data for 27beauty. Safe to run more than once.
 
 INSERT INTO categories (slug, name, description, emoji, sort_order) VALUES
-  ('pet-food-treats',    'Pet Food & Treats',        'Dog and cat food, snacks and chews.',                  '🐾', 10),
-  ('toys-games',         'Toys & Games',             'Toys, board games and puzzles for all ages.',          '🎲', 20),
-  ('coffee-tea',         'Coffee & Tea',             'Ground coffee, pods, tea bags and infusions.',          '☕', 30),
-  ('hair-beauty',        'Hair, Beauty & Grooming',  'Hair care, skincare, grooming and cosmetics.',          '💄', 40),
+  ('hair-beauty',        'Hair, Beauty & Grooming',  'Hair care, skincare, grooming and cosmetics.',          '💄', 10),
+  ('pet-food-treats',    'Pet Food & Treats',        'Dog and cat food, snacks and chews.',                  '🐾', 20),
+  ('toys-games',         'Toys & Games',             'Toys, board games and puzzles for all ages.',          '🎲', 30),
+  ('coffee-tea',         'Coffee & Tea',             'Ground coffee, pods, tea bags and infusions.',          '☕', 40),
   ('snacks-sweets',      'Crisps, Chocolate & Sweets','Crisps, chocolate, sweets and sharing bags.',          '🍫', 50),
   ('diy-tools',          'DIY & Tools',              'Tools, fixings, decorating and hardware.',             '🔧', 60),
   ('breakfast-bars',     'Breakfast & Cereal Bars',  'Cereals, porridge, breakfast and cereal bars.',         '🥣', 70),

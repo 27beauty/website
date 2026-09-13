@@ -39,7 +39,8 @@ for the eBay sync. TypeScript throughout, Vitest for tests.
   webhook as the source of truth for payment, idempotent order/stock/coupon
   handling
 - **Admin panel** at `/admin`: first-run setup, KV sessions with CSRF and login
-  rate limiting, dashboard, products with bulk stock editing, CSV import/export,
+  rate limiting, dashboard, a dedicated **Stock** screen showing website vs eBay
+  quantities per channel, products with bulk stock editing, CSV import/export,
   image uploads, categories, orders with printable packing slips, coupon manager
   with QR generation and printable card sheets, settings
 - **Coupons**: shop-wide (`QR10`), cards generated from a product (which discount
