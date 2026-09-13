@@ -8,13 +8,15 @@ name: Deploy to Cloudflare
 #                            Workers KV Storage:Edit, Workers R2 Storage:Edit
 #   CLOUDFLARE_ACCOUNT_ID  — from the Cloudflare dashboard URL
 #
-# Then run this workflow manually (Actions → Deploy to Cloudflare → Run
-# workflow) with "bootstrap" and "seed" ticked for the very first deploy.
-# After that, every push to main deploys automatically.
+# The D1 database and KV namespace already exist and the database is already
+# migrated and seeded, so for the first deploy leave "bootstrap" ticked (it is
+# idempotent — it will find them and reuse them) and leave "seed" unticked.
+# After that, every push to the default branch deploys automatically.
 
 on:
   push:
-    branches: [main]
+    # The repository's default branch. Rename here if you later move to main.
+    branches: [claude/27beauty-ecommerce-site-9bqn9c, main]
   workflow_dispatch:
     inputs:
       bootstrap:
