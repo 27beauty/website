@@ -54,6 +54,10 @@ npm run db:seed:local      # categories, settings, QR10 coupon
   containing a dash can never be found again. Use `formatCouponCode` to render.
 - A coupon with `product_id` set discounts only that product's basket lines;
   `eligiblePence` decides what a coupon may discount.
+- **R2 has no spending cap, so the app is the cap.** Every write goes through
+  `canStore()` in `src/lib/media.ts`, replaced and deleted images are reclaimed,
+  and `/media/*` is edge-cached so reads rarely reach R2. Never add an R2 write
+  path that skips those helpers. See `docs/costs.md`.
 
 ## Module map
 
@@ -76,6 +80,7 @@ src/routes/webhooks.ts     Stripe webhook (raw body — keep it first in index)
 src/routes/api.ts          health, sync trigger, JSON feeds
 src/routes/admin/          admin panel routes
 src/lib/qr.ts            QR SVG rendering + coupon code generation
+src/lib/media.ts         R2 storage budget, cleanup and usage accounting
 migrations/              D1 schema (0001_init.sql, 0002_product_coupons.sql)
 db/                      seed.sql (reference data) + demo-products.sql
 ```

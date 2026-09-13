@@ -5,6 +5,8 @@ import { AdminLayout, CsrfField } from '../../ui/admin-layout';
 import { getAllSettings, setSetting } from '../../lib/settings';
 import { hashPassword, verifyPassword } from '../../lib/crypto';
 import { runEbaySync } from '../../lib/ebay/sync';
+import { formatBytes, getMediaUsage, recalculateUsage } from '../../lib/media';
+import { clampInt } from '../../lib/util';
 
 /** Store settings, eBay accounts, sync control, secret status, own password. */
 export const settings = new Hono<AppBindings>();
@@ -27,6 +29,7 @@ const SECRET_KEYS = ['SESSION_SECRET', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECR
 settings.get('/', async (c) => {
   const admin = getAdmin(c);
   const flash = flashOf(c);
+  const mediaUsage = await getMediaUsage(c.env);
   const [s, accountsRes, runsRes] = await Promise.all([
     getAllSettings(c.env),
     c.env.DB.prepare('SELECT * FROM ebay_accounts ORDER BY id ASC').all<EbayAccount>(),
@@ -130,6 +133,52 @@ settings.get('/', async (c) => {
           Save settings
         </button>
       </form>
+
+      <div class="admin-panel">
+        <h3>Image storage</h3>
+        <p class="muted">
+          Product photos live in Cloudflare R2. Cloudflare gives 10&nbsp;GB free but has no hard
+          spending cap, so the shop enforces its own limit and refuses uploads that would cross it.
+        </p>
+        <div class="usage-bar" role="img"
+             aria-label={`${mediaUsage.percentUsed}% of the image storage limit used`}>
+          <span
+            class={`usage-fill${mediaUsage.percentUsed >= 90 ? ' usage-fill-bad' : mediaUsage.percentUsed >= 70 ? ' usage-fill-warn' : ''}`}
+            style={`width:${Math.max(mediaUsage.percentUsed, 2)}%`}
+          />
+        </div>
+        <p>
+          <strong>
+            {formatBytes(mediaUsage.bytesUsed)} of {formatBytes(mediaUsage.budgetBytes)}
+          </strong>{' '}
+          used across {mediaUsage.objectCount} image{mediaUsage.objectCount === 1 ? '' : 's'} —{' '}
+          {formatBytes(mediaUsage.remainingBytes)} left.
+        </p>
+        <form method="post" action="/admin/settings/media" class="row">
+          <CsrfField token={admin.csrf} />
+          <div class="field" style="margin-bottom:0">
+            <label for="media_budget_mb">Limit (MB)</label>
+            <input
+              id="media_budget_mb"
+              name="media_budget_mb"
+              type="number"
+              min="10"
+              max="8192"
+              step="10"
+              value={String(Math.round(mediaUsage.budgetBytes / (1024 * 1024)))}
+            />
+            <p class="field-hint">
+              Capped at 8&nbsp;GB so it always stays inside Cloudflare's free 10&nbsp;GB.
+            </p>
+          </div>
+          <button class="btn btn-secondary" type="submit" name="action" value="save">
+            Save limit
+          </button>
+          <button class="btn btn-secondary" type="submit" name="action" value="recount">
+            Recount from R2
+          </button>
+        </form>
+      </div>
 
       <div class="admin-panel">
         <h3>Secrets</h3>
@@ -305,6 +354,35 @@ settings.post('/', async (c) => {
     setSetting(c.env, 'coupon.default_percent', Math.min(100, Math.max(0, asNumber(body.coupon_default_percent, 10)))),
   ]);
   return c.redirect('/admin/settings?msg=' + encodeURIComponent('Settings saved.'), 303);
+});
+
+/** Image storage budget: save the cap, or recount actual usage from R2. */
+settings.post('/media', async (c) => {
+  const body = await c.req.parseBody();
+  if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
+    return c.redirect('/admin/settings?err=' + encodeURIComponent('Your session expired — please try again.'), 303);
+  }
+
+  if (body.action === 'recount') {
+    const usage = await recalculateUsage(c.env);
+    return c.redirect(
+      '/admin/settings?msg=' +
+        encodeURIComponent(
+          `Recounted: ${formatBytes(usage.bytesUsed)} across ${usage.objectCount} image${
+            usage.objectCount === 1 ? '' : 's'
+          }.`,
+        ),
+      303,
+    );
+  }
+
+  // 8 GB ceiling, so the limit itself can never be set past the free tier.
+  const mb = clampInt(body.media_budget_mb, 10, 8192, 1024);
+  await setSetting(c.env, 'media.max_bytes', mb * 1024 * 1024);
+  return c.redirect(
+    '/admin/settings?msg=' + encodeURIComponent(`Image storage limit set to ${formatBytes(mb * 1024 * 1024)}.`),
+    303,
+  );
 });
 
 settings.post('/ebay-accounts', async (c) => {

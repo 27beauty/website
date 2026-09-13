@@ -8,6 +8,14 @@ import { clampInt, parseJsonArray, poundsToPence, uniqueSlug } from '../../lib/u
 import { randomToken } from '../../lib/crypto';
 import { couponQrUrl, formatCouponCode, productCouponCode, renderQrSvg } from '../../lib/qr';
 import { getSetting } from '../../lib/settings';
+import {
+  canStore,
+  deleteProductImages,
+  deleteStoredImage,
+  formatBytes,
+  getMediaUsage,
+  recordUpload,
+} from '../../lib/media';
 
 /** Product catalogue: list, editor, image upload, CSV import/export.
  * Categories live in ./categories.tsx and the R2 media route in ./media.tsx —
@@ -1190,8 +1198,18 @@ products.post('/:id/delete', async (c) => {
   if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
     return c.redirect(redirectWith(back, { err: 'Your session expired — please try again.' }), 303);
   }
+  // Reclaim the product's stored photos too, or deleted products would keep
+  // paying rent in R2 forever.
+  const removed = await deleteProductImages(c.env, id);
   await c.env.DB.prepare('DELETE FROM products WHERE id = ?').bind(id).run();
-  return c.redirect(redirectWith('/admin/products', { msg: 'Product deleted.' }), 303);
+  return c.redirect(
+    redirectWith('/admin/products', {
+      msg: removed
+        ? `Product deleted, along with ${removed} stored image${removed === 1 ? '' : 's'}.`
+        : 'Product deleted.',
+    }),
+    303,
+  );
 });
 
 const IMAGE_EXT: Record<string, string> = {
@@ -1218,11 +1236,6 @@ products.post('/:id/image', async (c) => {
   if (!file.type.startsWith('image/')) {
     return c.redirect(`/admin/products/${id}?err=` + encodeURIComponent('Only image files are allowed.'), 303);
   }
-  if (file.size > MAX_IMAGE_BYTES) {
-    return c.redirect(`/admin/products/${id}?err=` + encodeURIComponent('Images must be 5MB or smaller.'), 303);
-  }
-  const ext = IMAGE_EXT[file.type] ?? 'jpg';
-  const key = `products/${id}/${randomToken(8)}.${ext}`;
   if (!c.env.MEDIA) {
     return c.redirect(
       `/admin/products/${id}?err=` +
@@ -1232,13 +1245,41 @@ products.post('/:id/image', async (c) => {
       303,
     );
   }
+
+  // Refuse anything that would push stored bytes past the self-imposed budget.
+  // Cloudflare has no hard spend cap on R2, so this is the cap.
+  const decision = await canStore(c.env, file.size);
+  if (!decision.ok) {
+    return c.redirect(`/admin/products/${id}?err=` + encodeURIComponent(decision.reason ?? 'Upload refused.'), 303);
+  }
+
+  const ext = IMAGE_EXT[file.type] ?? 'jpg';
+  const key = `products/${id}/${randomToken(8)}.${ext}`;
+
+  // What this photo replaces, so the old object does not linger and eat the
+  // budget — re-uploading ten times used to leave ten copies behind.
+  const previous = await c.env.DB.prepare('SELECT image_url FROM products WHERE id = ?')
+    .bind(id)
+    .first<{ image_url: string | null }>();
+
   await c.env.MEDIA.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: file.type } });
+  await recordUpload(c.env, file.size);
+
   // Stored under the public /media/ route (src/index.tsx), not /admin/media —
   // robots.txt disallows /admin, and product photos need to be crawlable.
   await c.env.DB.prepare("UPDATE products SET image_url = ?, updated_at = datetime('now') WHERE id = ?")
     .bind(`/media/${key}`, id)
     .run();
-  return c.redirect(`/admin/products/${id}?msg=${encodeURIComponent('Image uploaded.')}`, 303);
+
+  await deleteStoredImage(c.env, previous?.image_url);
+
+  const after = await getMediaUsage(c.env);
+  return c.redirect(
+    `/admin/products/${id}?msg=${encodeURIComponent(
+      `Image uploaded. Storage used: ${formatBytes(after.bytesUsed)} of ${formatBytes(after.budgetBytes)}.`,
+    )}`,
+    303,
+  );
 });
 
 /* ---------------------------------------------------------------------- */

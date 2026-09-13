@@ -424,3 +424,22 @@ input[inputmode="decimal"], input[type="number"] { font-variant-numeric: tabular
    folded under the customer name once the Date column drops away). */
 .show-when-narrow { display: none; }
 @media (max-width: 640px) { .show-when-narrow { display: block; } }
+
+/* Storage budget meter — how close image storage is to its self-imposed cap. */
+.usage-bar {
+  height: 12px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  margin: 10px 0;
+}
+.usage-fill {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+  border-radius: 999px;
+  transition: width .3s ease;
+}
+.usage-fill-warn { background: var(--accent); }
+.usage-fill-bad { background: var(--bad); }

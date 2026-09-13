@@ -100,6 +100,7 @@ nameservers; the certificate is issued automatically.
 - **eBay**: see **[docs/ebay-setup.md](docs/ebay-setup.md)**.
 - **QR cards**: see **[docs/qr-coupons.md](docs/qr-coupons.md)**.
 - **Running the shop day to day**: see **[docs/admin-guide.md](docs/admin-guide.md)**.
+- **Staying inside the free tier**: see **[docs/costs.md](docs/costs.md)**.
 
 ---
 
@@ -141,7 +142,9 @@ file in the same round**, and anything shared belongs to the orchestrator.
 
 ## Running costs
 
-Cloudflare Workers, D1, KV and R2 all have free tiers this shop will sit inside
-for a long time; the Workers paid plan is $5/month if you exceed them. Stripe
-charges per transaction (UK cards ~1.5% + 20p at the time of writing). The only
-fixed cost is the domain.
+Cloudflare Workers, D1, KV and R2 all have free tiers this shop sits inside
+comfortably. R2 is the one service with no hard spending cap, so the app
+enforces its own storage budget and refuses uploads that would cross it — see
+**[docs/costs.md](docs/costs.md)** for exactly what is guarded and the two
+things only you can do in the dashboard. Stripe charges per transaction (UK
+cards ~1.5% + 20p at the time of writing). The only fixed cost is the domain.

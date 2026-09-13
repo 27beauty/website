@@ -24,15 +24,13 @@ binding = "KV"
 id = "c2bbd1afeb964a1ea6c2fb36138936aa"
 
 # Product images uploaded through the admin panel.
-# R2 must be switched on once in the Cloudflare dashboard (R2 → Enable) before
-# this binding can be created. Until then the shop runs fine on image URLs —
-# which is what the eBay sync provides anyway. To enable uploads:
-#   1. Cloudflare dashboard → R2 → Enable
-#   2. npx wrangler r2 bucket create 27beauty-media
-#   3. uncomment the three lines below and redeploy
-# [[r2_buckets]]
-# binding = "MEDIA"
-# bucket_name = "27beauty-media"
+# Spending guardrail: Cloudflare has no hard cap on R2, so the shop enforces
+# its own storage budget (see src/lib/media.ts and Admin → Settings → Image
+# storage). Uploads that would cross it are refused, replaced photos are
+# deleted, and /media/* is edge-cached so reads rarely reach R2 at all.
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "27beauty-media"
 
 # eBay sync runs every 30 minutes.
 [triggers]
