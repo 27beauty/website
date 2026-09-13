@@ -52,8 +52,10 @@ npm run db:seed:local      # categories, settings, QR10 coupon
 - **Coupon codes are stored canonical** — uppercase letters and digits only.
   `normaliseCouponCode` strips punctuation before every lookup, so a stored code
   containing a dash can never be found again. Use `formatCouponCode` to render.
-- A coupon with `product_id` set discounts only that product's basket lines;
-  `eligiblePence` decides what a coupon may discount.
+- `eligiblePence` decides what a coupon may discount. **Coupons discount the
+  whole basket by default.** `product_id` only records which product a QR card
+  was made for (and what its landing page features); the discount is restricted
+  to that product only when `product_only = 1`.
 - **R2 has no spending cap, so the app is the cap.** Every write goes through
   `canStore()` in `src/lib/media.ts`, replaced and deleted images are reclaimed,
   and `/media/*` is edge-cached so reads rarely reach R2. Never add an R2 write

@@ -42,8 +42,9 @@ for the eBay sync. TypeScript throughout, Vitest for tests.
   rate limiting, dashboard, products with bulk stock editing, CSV import/export,
   image uploads, categories, orders with printable packing slips, coupon manager
   with QR generation and printable card sheets, settings
-- **Coupons**: shop-wide (`QR10`), **per-item** (e.g. `10OFFYORKSHIRETEA`, which
-  discounts only that product), and single-use batches
+- **Coupons**: shop-wide (`QR10`), cards generated from a product (which discount
+  the whole basket but land the customer on that product), an opt-in
+  single-item restriction, and single-use batches
 - **eBay sync**: OAuth (client-credentials and refresh-token), Browse and Sell
   Inventory clients, keyword category mapping, markup, per-field locks, delisted
   items archived not deleted, `sync_runs` audit trail, cron every 30 minutes,

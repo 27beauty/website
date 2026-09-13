@@ -102,8 +102,14 @@ export interface Coupon {
   kind: CouponKind;
   value: number;
   description: string | null;
-  /** When set, the discount applies only to this product's basket lines. */
+  /**
+   * The product this coupon was made for. By default it only decides what the
+   * QR landing page features — the discount itself applies to the whole
+   * basket. Set `product_only` to restrict the discount to this product.
+   */
   product_id: number | null;
+  /** 1 = discount only this product's lines; 0 = discount the whole basket. */
+  product_only: number;
   min_spend_pence: number;
   max_redemptions: number | null;
   times_used: number;

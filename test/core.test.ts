@@ -22,6 +22,7 @@ const coupon = (over: Partial<Coupon> = {}): Coupon => ({
   value: 10,
   description: null,
   product_id: null,
+  product_only: 0,
   min_spend_pence: 0,
   max_redemptions: null,
   times_used: 0,

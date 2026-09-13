@@ -143,12 +143,19 @@ coupons.get('/', async (c) => {
                   </td>
                   <td>{valueLabel(coupon)}</td>
                   <td>
-                    {coupon.product_id ? (
+                    {coupon.product_only === 1 && coupon.product_id ? (
                       <a href={`/admin/products/${coupon.product_id}`}>
-                        {productTitles.get(coupon.product_id) ?? `Item #${coupon.product_id}`}
+                        Only {productTitles.get(coupon.product_id) ?? `item #${coupon.product_id}`}
                       </a>
                     ) : (
-                      <span class="faint">Whole basket</span>
+                      <>
+                        <span>Everything</span>
+                        {coupon.product_id ? (
+                          <div class="faint small">
+                            card for {productTitles.get(coupon.product_id) ?? `item #${coupon.product_id}`}
+                          </div>
+                        ) : null}
+                      </>
                     )}
                   </td>
                   <td class="faint col-optional">{coupon.batch ?? '—'}</td>
@@ -204,6 +211,7 @@ interface CouponFormValues {
   expires_at: string;
   batch: string;
   product_id: string;
+  product_only: boolean;
 }
 
 function CouponForm(props: {
@@ -230,10 +238,10 @@ function CouponForm(props: {
           </div>
         </div>
         <div class="field">
-          <label for="product_id">Applies to</label>
+          <label for="product_id">Card features (optional)</label>
           <select id="product_id" name="product_id">
             <option value="" selected={!v.product_id}>
-              Everything in the basket
+              Nothing in particular
             </option>
             {(props.products ?? []).map((p) => (
               <option value={String(p.id)} selected={v.product_id === String(p.id)}>
@@ -242,10 +250,16 @@ function CouponForm(props: {
             ))}
           </select>
           <p class="field-hint">
-            Pick one item to make this a single-item offer — the discount then comes off that item
-            only. To make a QR card for an item quickly, open the product and press
+            The product a scanned card lands on. The discount still comes off the whole basket unless
+            you tick the box below. To make a card for an item quickly, open the product and press
             <strong> Create QR code</strong>.
           </p>
+        </div>
+        <div class="field">
+          <label class="check">
+            <input type="checkbox" name="product_only" value="1" checked={v.product_only} />
+            <span>Restrict the discount to that product only</span>
+          </label>
         </div>
         <div class="admin-grid cols-3">
           <div class="field">
@@ -319,6 +333,7 @@ function blankCouponForm(): CouponFormValues {
     expires_at: '',
     batch: '',
     product_id: '',
+    product_only: false,
   };
 }
 
@@ -384,8 +399,8 @@ coupons.post('/new', async (c) => {
   try {
     await c.env.DB.prepare(
       `INSERT INTO coupons (code, kind, value, description, min_spend_pence, max_redemptions, per_customer_limit,
-        free_shipping, starts_at, expires_at, batch, product_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        free_shipping, starts_at, expires_at, batch, product_id, product_only)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
       .bind(
         code,
@@ -400,6 +415,7 @@ coupons.post('/new', async (c) => {
         str('expires_at') || null,
         str('batch') || null,
         parseOptionalPositiveInt(str('product_id')),
+        str('product_only') === '1' ? 1 : 0,
       )
       .run();
   } catch {
@@ -528,6 +544,7 @@ coupons.get('/:id', async (c) => {
     expires_at: coupon.expires_at ?? '',
     batch: coupon.batch ?? '',
     product_id: coupon.product_id !== null ? String(coupon.product_id) : '',
+    product_only: coupon.product_only === 1,
   };
   const flash = flashOf(c);
   return c.html(
@@ -575,7 +592,8 @@ coupons.post('/:id', async (c) => {
   const minSpend = parsePoundsOrPercent(str('min_spend') || '0', 'fixed') ?? 0;
   await c.env.DB.prepare(
     `UPDATE coupons SET code=?, kind=?, value=?, description=?, min_spend_pence=?, max_redemptions=?,
-       per_customer_limit=?, free_shipping=?, starts_at=?, expires_at=?, batch=?, product_id=? WHERE id=?`,
+       per_customer_limit=?, free_shipping=?, starts_at=?, expires_at=?, batch=?, product_id=?,
+       product_only=? WHERE id=?`,
   )
     .bind(
       code,
@@ -590,6 +608,7 @@ coupons.post('/:id', async (c) => {
       str('expires_at') || null,
       str('batch') || null,
       parseOptionalPositiveInt(str('product_id')),
+      str('product_only') === '1' ? 1 : 0,
       id,
     )
     .run();

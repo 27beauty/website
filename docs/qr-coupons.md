@@ -32,26 +32,32 @@ Practical notes:
 | | What it is | Make it |
 | --- | --- | --- |
 | **Shop-wide** (`QR10`) | 10% off anything in the basket | Already set up |
-| **Per item** | 10% off one specific product, e.g. `10OFFYORKSHIRETEA` | Open the product → **Create QR code** |
+| **Made for a product** | 10% off the whole basket, landing on that product | Open the product → **Create QR code** |
+| **Single item only** | 10% off one product and nothing else | Same, but tick *Restrict to this item only* |
 | **Single-use batch** | A run of codes that each work once | Coupons → **Generate batch** |
 
-### Per-item cards — the sharpest tool here
+### Cards made from a product — the sharpest tool here
 
 Open any product in the admin panel and scroll to **QR discount for this item**.
 Choose a percentage (10% by default), optionally an expiry and whether it can be
 used once, then press **Create QR code**. You get:
 
-- a readable code that says what it is — `10OFFYORKSHIRETEA`, not `27B-K7XQ`
-- a QR that lands the customer on **that product**, price already discounted
+- a code that takes the percentage off **the customer's whole basket**
+- a QR that lands them on **that product**, price already discounted
 - Print and Poster views for the card
 
-The discount comes off that item only. If someone puts the code in with the
-wrong basket, the site tells them which item it is for rather than just
-refusing it.
+Use these when you know what the customer bought: someone who bought cat treats
+gets a card that opens on cat treats. The familiar product is what makes them
+scan — but because the discount covers everything, they have every reason to
+fill the basket rather than reorder one item.
 
-Use these when you know what the customer bought. Someone who bought cat treats
-on the marketplace gets a card for cat treats — a far better hit rate than a
-generic 10% card, and you keep control of which margins you discount.
+The code is deliberately neutral (`10OFFK7XQ`, not `10OFFCATTREATS`) so nobody
+assumes it only works on one thing. The product it was printed for is recorded
+against the coupon, so you can still see which parcels convert.
+
+**If you really do want a single-item offer**, tick *Restrict to this item only*
+when creating it. The code is then named after the product, and if someone tries
+it with the wrong basket the site tells them which item it is for.
 
 ## One shared code, or one code per card?
 
