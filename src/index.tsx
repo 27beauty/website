@@ -47,6 +47,7 @@ app.use('*', async (c, next) => {
  * from here so the storefront can link to them directly.
  */
 app.get('/media/*', async (c) => {
+  if (!c.env.MEDIA) return c.notFound(); // R2 not enabled on the account yet
   const key = decodeURIComponent(new URL(c.req.url).pathname.replace(/^\/media\//, ''));
   if (!key || key.includes('..')) return c.notFound();
   const object = await c.env.MEDIA.get(key);

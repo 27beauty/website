@@ -7,7 +7,8 @@ export interface Env {
   // Bindings (wrangler.toml)
   DB: D1Database;
   KV: KVNamespace;
-  MEDIA: R2Bucket;
+  /** Optional: only bound once R2 is enabled on the account (see wrangler.toml). */
+  MEDIA?: R2Bucket;
   ASSETS: Fetcher;
 
   // Plain vars

@@ -10,6 +10,7 @@ export const media = new Hono<AppBindings>();
 
 media.get('/:key{.+}', async (c) => {
   const key = c.req.param('key');
+  if (!c.env.MEDIA) return c.notFound(); // R2 not enabled on the account yet
   const obj = await c.env.MEDIA.get(key);
   if (!obj) return c.text('Not found', 404);
   const headers = new Headers();

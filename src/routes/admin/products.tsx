@@ -1223,6 +1223,15 @@ products.post('/:id/image', async (c) => {
   }
   const ext = IMAGE_EXT[file.type] ?? 'jpg';
   const key = `products/${id}/${randomToken(8)}.${ext}`;
+  if (!c.env.MEDIA) {
+    return c.redirect(
+      `/admin/products/${id}?err=` +
+        encodeURIComponent(
+          'Image uploads need R2 storage. Turn R2 on in the Cloudflare dashboard, then redeploy. In the meantime you can paste an image URL into the Main image URL field.',
+        ),
+      303,
+    );
+  }
   await c.env.MEDIA.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: file.type } });
   // Stored under the public /media/ route (src/index.tsx), not /admin/media —
   // robots.txt disallows /admin, and product photos need to be crawlable.

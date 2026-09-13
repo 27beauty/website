@@ -1,32 +1,118 @@
-name: Deploy
+name: Deploy to Cloudflare
 
-# Ships to Cloudflare on every push to main, once CLOUDFLARE_API_TOKEN and
-# CLOUDFLARE_ACCOUNT_ID are set as repository secrets. Until then it no-ops.
+# Deploys 27beauty to Cloudflare Workers.
+#
+# One-time setup: add two repository secrets under
+# Settings → Secrets and variables → Actions
+#   CLOUDFLARE_API_TOKEN   — token with Workers Scripts:Edit, D1:Edit,
+#                            Workers KV Storage:Edit, Workers R2 Storage:Edit
+#   CLOUDFLARE_ACCOUNT_ID  — from the Cloudflare dashboard URL
+#
+# Then run this workflow manually (Actions → Deploy to Cloudflare → Run
+# workflow) with "bootstrap" and "seed" ticked for the very first deploy.
+# After that, every push to main deploys automatically.
+
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: 'Create the D1 database, KV namespace and R2 bucket if missing'
+        type: boolean
+        default: true
+      seed:
+        description: 'Load categories, settings and the QR10 coupon (first deploy only)'
+        type: boolean
+        default: false
+      demo_products:
+        description: 'Also load 16 demo products so the shop is not empty'
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-cloudflare
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v5
+
       - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
+
+      - name: Check the deploy credentials are present
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID under Settings → Secrets and variables → Actions, then run this again."
+            exit 1
+          fi
+
       - run: npm ci
-      - run: npm run typecheck && npm test
+
+      - name: Typecheck and test
+        run: npm run typecheck && npm test
+
+      - name: Create Cloudflare resources
+        if: github.event_name == 'push' || inputs.bootstrap
+        run: node scripts/bootstrap-cloudflare.mjs
+
       - name: Apply database migrations
-        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler d1 migrations apply DB --remote
-      - name: Deploy Worker
-        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
+
+      - name: Seed reference data
+        if: inputs.seed
+        run: npx wrangler d1 execute DB --remote --file=./db/seed.sql --yes
+
+      - name: Load demo products
+        if: inputs.demo_products
+        run: npx wrangler d1 execute DB --remote --file=./db/demo-products.sql --yes
+
+      - name: Sync Worker secrets
+        # Each one is pushed only if you've added it as a repository secret, so
+        # you can start with just SESSION_SECRET and add Stripe/eBay later.
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+          EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+          EBAY_REFRESH_TOKEN: ${{ secrets.EBAY_REFRESH_TOKEN }}
+          EBAY_REFRESH_TOKEN_2: ${{ secrets.EBAY_REFRESH_TOKEN_2 }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -u
+          pushed=0
+          for name in SESSION_SECRET STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET \
+                      EBAY_CLIENT_ID EBAY_CLIENT_SECRET EBAY_REFRESH_TOKEN \
+                      EBAY_REFRESH_TOKEN_2 SYNC_TOKEN; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              # --- never echo the value itself ---
+              printf '%s' "$value" | npx wrangler secret put "$name" >/dev/null 2>&1 \
+                && { echo "  set $name"; pushed=$((pushed+1)); } \
+                || echo "::warning::could not set $name"
+            fi
+          done
+          echo "$pushed secret(s) synced"
+
+      - name: Deploy the Worker
         run: npx wrangler deploy
+
+      - name: Summary
+        run: |
+          {
+            echo "### 27beauty deployed :rocket:"
+            echo ""
+            echo "Next steps, once per shop:"
+            echo "1. Set the secrets: \`wrangler secret put SESSION_SECRET\` (and the Stripe and eBay keys) — or add them in the Cloudflare dashboard under Workers → 27beauty → Settings → Variables."
+            echo "2. Add the custom domain \`27beauty.co.uk\` under Workers → 27beauty → Domains & Routes."
+            echo "3. Create your admin login at \`/admin/setup\` — it closes itself afterwards."
+          } >> "$GITHUB_STEP_SUMMARY"
