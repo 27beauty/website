@@ -4,7 +4,7 @@ This page is for the shop owner, not a developer. It explains how to get your
 eBay listings showing up automatically on 27beauty.co.uk, so a customer who
 scans the QR card in their parcel finds the same product here.
 
-The website checks eBay automatically **every 30 minutes**. You don't need to
+The website checks eBay automatically **every 10 minutes**. You don't need to
 do anything to trigger it — this guide is a one-off setup, plus how to add a
 second eBay account later and how to read the sync log.
 

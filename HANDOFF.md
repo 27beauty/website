@@ -48,7 +48,7 @@ for the eBay sync. TypeScript throughout, Vitest for tests.
   single-item restriction, and single-use batches
 - **eBay sync**: OAuth (client-credentials and refresh-token), Browse and Sell
   Inventory clients, keyword category mapping, markup, per-field locks, delisted
-  items archived not deleted, `sync_runs` audit trail, cron every 30 minutes,
+  items archived not deleted, `sync_runs` audit trail, cron every 10 minutes,
   authenticated `/api/sync/ebay` trigger
 - **133 tests passing**, `npm run typecheck` clean, CI on every push
 
@@ -58,51 +58,96 @@ Already created and configured (ids are committed in `wrangler.toml`):
 
 | Resource | Name | State |
 | --- | --- | --- |
-| D1 database | `27beauty` | Created (WEUR). **Schema applied, seeded and populated**: 11 categories, 13 settings, the `QR10` coupon, 134 eBay category rules, **90 real products** imported from the owner's two eBay shops, and both shops registered in `ebay_accounts`. Both migrations recorded in `d1_migrations`, so `wrangler d1 migrations apply` correctly no-ops |
+| Worker | `27beauty` | **Deployed** (first deploy 13 Sep 05:37, from the owner's machine via `wrangler login` + `wrangler deploy`) |
+| Custom domain | `27beauty.co.uk` | **Attached and resolving.** `SITE_URL` already points at it |
+| D1 database | `27beauty` | Created (WEUR). **Schema applied, seeded and populated**: 11 categories, 13 settings, the `QR10` coupon, 134 eBay category rules, **90 real products** imported from the owner's two eBay shops, and both shops registered in `ebay_accounts`. All four migrations recorded in `d1_migrations`, so `wrangler d1 migrations apply` correctly no-ops |
 | KV namespace | `27beauty-KV` | Created, bound |
 | R2 bucket | `27beauty-media` | Created, bound, 1 GB self-imposed budget |
+| Admin account | `nathafba@gmail.com` | Created, so `/admin/setup` is closed. **The password is one character below the site's own 12-char minimum and was typed into a chat — it should be changed** |
 
-**Nothing is deployed.** No Worker code has been uploaded and the domain is not
-attached. The site is not reachable by anyone yet.
+**The site is live at https://27beauty.co.uk.** What is *not* done is the money
+and the sync: no Stripe keys, no eBay credentials, no orders taken yet.
+
+Note that migrations 0003 and 0004 were applied to production by hand through
+the Cloudflare MCP connector (this sandbox cannot reach `api.cloudflare.com`),
+and recorded in `d1_migrations` afterwards. If you add a migration, either apply
+it the same way or have the owner run `wrangler d1 migrations apply DB --remote`.
 
 ## What needs doing next
 
-In order:
+The site is up and stocked; nothing can be *bought* yet. In order:
 
-1. **Deploy the Worker.** The owner was walked through doing this from their own
-   machine: `npm install && npx wrangler login && npx wrangler deploy`. Confirm
-   with them whether this succeeded and what the `*.workers.dev` URL is.
-   Alternatively the repo has a GitHub Actions workflow
-   (`.github/workflows/deploy.yml`) that does bootstrap + migrate + deploy; it
-   needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as repository
-   secrets.
-2. **`SESSION_SECRET`** — `npx wrangler secret put SESSION_SECRET` with 32 random
-   bytes of hex. Signs admin sessions and basket cookies. Nothing should go live
-   without it.
-3. **First admin account** — visit `/admin/setup` once; it closes itself.
-4. **Custom domain** — attach `27beauty.co.uk` and `www` in the Cloudflare
-   dashboard (Workers & Pages → 27beauty → Settings → Domains & Routes). Needs
-   the domain on Cloudflare nameservers. `SITE_URL` in `wrangler.toml` is already
-   `https://27beauty.co.uk`; Stripe redirects, canonical URLs, the sitemap and
-   every QR code are built from it, so don't run a real payment test before the
-   domain resolves.
-5. **Stripe** — `STRIPE_SECRET_KEY`, then add a webhook endpoint at
+1. **Redeploy.** Commits after the first deploy (the Stock screen, the new
+   headline, basket-wide coupons, the 10-minute cron) are on the branch but not
+   yet on the Worker unless the owner has run `npx wrangler deploy` again. Ask
+   before assuming. The matching database changes are already applied.
+2. **Confirm `SESSION_SECRET` is set** — `npx wrangler secret put SESSION_SECRET`
+   with 32 random bytes of hex. Signs admin sessions and basket cookies. Never
+   confirmed as done, and it matters more now the site is public.
+3. **Stripe** — `STRIPE_SECRET_KEY`, then add a webhook endpoint at
    `https://27beauty.co.uk/webhooks/stripe` for `checkout.session.completed`,
    `checkout.session.expired`, `checkout.session.async_payment_succeeded`,
    `checkout.session.async_payment_failed`, and store its signing secret as
    `STRIPE_WEBHOOK_SECRET`. Then place one real low-value order end to end and
    refund it: confirm the order shows **paid** in `/admin/orders` and stock went
    down by exactly one.
-6. **eBay** — follow `docs/ebay-setup.md`: `EBAY_CLIENT_ID` and
-   `EBAY_CLIENT_SECRET`, then flip `ebay.sync_enabled` on and press *Sync now*.
+4. **eBay** — follow `docs/ebay-setup.md`. The owner's **production** App ID is
+   `Mohammed-FlipTrak-PRD-6e05e7ced-c80f11ba` (the `PRD` segment confirms it is
+   not a sandbox key); the Cert ID is the secret and is not recorded anywhere in
+   this repo. Set `EBAY_CLIENT_ID` and `EBAY_CLIENT_SECRET`, then flip
+   `ebay.sync_enabled` on and press *Sync now*. eBay's Dev ID is not used — that
+   is for the older Trading API; this site uses Browse with client credentials.
+   Setting `SYNC_TOKEN` also allows a sync to be triggered without logging in:
+   `curl -X POST https://27beauty.co.uk/api/sync/ebay -H "X-Sync-Token: …"`.
    Both accounts are already registered (**aisha-4515**, 30 listings, and
    **adinath0**, 60) in browse mode with 0% markup. Browse mode works with just
    app credentials; Sell mode needs a per-account refresh token and gives exact
    stock. **The first sync will correct the placeholder stock levels** — the 90
    imported products were seeded at 5 units each (1 where the listing said "Last
    one") because the catalogue capture carried no quantities.
-7. **Ask whether the repo should be private.** It is public today. No secrets are
+5. **Ask whether the repo should be private.** It is public today. No secrets are
    committed (verified), but the owner may not have intended public.
+
+## Decisions already taken (don't relitigate these)
+
+- **Payments stay on Stripe.** Researched against PayPal, Square, SumUp, Mollie,
+  Revolut and Worldpay in September 2026. At this volume (30–150 orders/month,
+  ~£25 basket) Stripe is the cheapest or joint-cheapest at 1.5% + 20p with no
+  monthly fee, and nothing saves enough to justify rebuilding a working, tested
+  integration. PayPal is worth adding later as a *secondary* button for
+  conversion, never as the primary processor — its account-freeze and
+  rolling-reserve reputation is current and deserved.
+- **Discounts are basket-wide.** The owner asked for this explicitly. See the
+  coupon note in `CLAUDE.md`.
+- **Beauty leads the category order.** It is 32 of the 90 products and what the
+  brand is named after. Order is `sort_order` on `categories`, editable at
+  Admin → Products → Categories.
+- **The home headline avoids a comparative price claim.** "Cheaper prices" was
+  considered and rejected: the imported prices currently match the eBay
+  listings, so it would be both unsubstantiated and checkable. The line is
+  "Everyday brands, without the marketplace markup", which explains the actual
+  source of the saving (no marketplace fee).
+- **Product images are hotlinked from eBay's CDN** rather than copied into R2,
+  to keep storage at zero. See the caveat below.
+
+## Stock across channels
+
+`products.stock` is the figure the website sells from — the owner's master
+number. `products.ebay_stock` records what the last sync saw on eBay, and is
+written **even when `stock_locked` stops the sync overwriting the website
+figure**, which is what makes a drift between channels visible.
+
+**Admin → Stock** is the screen for this: every product in one list, ordered so
+out-of-stock and low items come first, with both figures side by side and a flag
+where they disagree. It is second in the admin nav because it is the thing the
+shop gets opened for most days.
+
+What does **not** exist yet is pushing the website figure back *to* eBay. That
+needs sell-mode credentials (a refresh token per account, via the consent flow
+in `docs/ebay-setup.md`) and the Inventory API. It is the natural next step once
+the read-only sync has proven itself, and the owner has asked for it in spirit —
+they want "a centralised place to enter and track quantities across all my
+platforms", and today the screen gives them the tracking half of that.
 
 ## About the imported catalogue
 
