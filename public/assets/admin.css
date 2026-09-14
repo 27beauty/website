@@ -147,6 +147,7 @@ body.admin-page {
 .admin-grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
 @media (min-width: 640px) { .admin-grid.cols-2 { grid-template-columns: 1fr 1fr; } }
 @media (min-width: 860px) { .admin-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; } }
+@media (min-width: 860px) { .admin-grid.cols-4 { grid-template-columns: 1fr 1fr 1fr 1fr; } }
 
 .checkbox-row { display: flex; align-items: center; gap: 8px; min-height: var(--tap); }
 .checkbox-row label { margin: 0; font-weight: 500; }

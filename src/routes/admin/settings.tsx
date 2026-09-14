@@ -24,7 +24,15 @@ function asNumber(v: unknown, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-const SECRET_KEYS = ['SESSION_SECRET', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'EBAY_CLIENT_ID', 'EBAY_CLIENT_SECRET'] as const;
+const SECRET_KEYS = [
+  'SESSION_SECRET',
+  'STRIPE_SECRET_KEY',
+  'STRIPE_WEBHOOK_SECRET',
+  'EBAY_CLIENT_ID',
+  'EBAY_CLIENT_SECRET',
+  'PARCEL2GO_CLIENT_ID',
+  'PARCEL2GO_CLIENT_SECRET',
+] as const;
 
 settings.get('/', async (c) => {
   const admin = getAdmin(c);
@@ -117,6 +125,10 @@ settings.get('/', async (c) => {
             <input id="ebay_auto_publish" type="checkbox" name="ebay_auto_publish" value="1" checked={s['ebay.auto_publish'] !== false} />
             <label for="ebay_auto_publish">Auto-publish new eBay listings</label>
           </div>
+          <div class="checkbox-row field">
+            <input id="parcel2go_enabled" type="checkbox" name="parcel2go_enabled" value="1" checked={Boolean(s['parcel2go.enabled'])} />
+            <label for="parcel2go_enabled">Push paid orders to Parcel2Go</label>
+          </div>
         </div>
         <div class="field" style="max-width:220px;">
           <label for="ebay_markup_percent">eBay markup %</label>
@@ -127,6 +139,33 @@ settings.get('/', async (c) => {
             min="0"
             value={String(asNumber(s['ebay.markup_percent'], 0))}
           />
+        </div>
+
+        <h3>Parcel2Go default parcel size</h3>
+        <p class="muted">
+          Used for every order pushed to Parcel2Go — the site doesn't track per-product weight/dimensions yet.
+        </p>
+        <div class="admin-grid cols-4">
+          <div class="field">
+            <label for="p2g_weight">Weight (kg)</label>
+            <input id="p2g_weight" name="p2g_weight" type="number" step="0.1" min="0.1"
+              value={String(asNumber(s['parcel2go.default_weight_kg'], 1))} />
+          </div>
+          <div class="field">
+            <label for="p2g_length">Length (cm)</label>
+            <input id="p2g_length" name="p2g_length" type="number" min="1"
+              value={String(asNumber(s['parcel2go.default_length_cm'], 30))} />
+          </div>
+          <div class="field">
+            <label for="p2g_width">Width (cm)</label>
+            <input id="p2g_width" name="p2g_width" type="number" min="1"
+              value={String(asNumber(s['parcel2go.default_width_cm'], 20))} />
+          </div>
+          <div class="field">
+            <label for="p2g_height">Height (cm)</label>
+            <input id="p2g_height" name="p2g_height" type="number" min="1"
+              value={String(asNumber(s['parcel2go.default_height_cm'], 5))} />
+          </div>
         </div>
 
         <button class="btn" type="submit">
@@ -352,6 +391,11 @@ settings.post('/', async (c) => {
     setSetting(c.env, 'ebay.auto_publish', body.ebay_auto_publish === '1'),
     setSetting(c.env, 'ebay.markup_percent', Math.max(0, asNumber(body.ebay_markup_percent, 0))),
     setSetting(c.env, 'coupon.default_percent', Math.min(100, Math.max(0, asNumber(body.coupon_default_percent, 10)))),
+    setSetting(c.env, 'parcel2go.enabled', body.parcel2go_enabled === '1'),
+    setSetting(c.env, 'parcel2go.default_weight_kg', Math.max(0.1, asNumber(body.p2g_weight, 1))),
+    setSetting(c.env, 'parcel2go.default_length_cm', Math.max(1, asNumber(body.p2g_length, 30))),
+    setSetting(c.env, 'parcel2go.default_width_cm', Math.max(1, asNumber(body.p2g_width, 20))),
+    setSetting(c.env, 'parcel2go.default_height_cm', Math.max(1, asNumber(body.p2g_height, 5))),
   ]);
   return c.redirect('/admin/settings?msg=' + encodeURIComponent('Settings saved.'), 303);
 });

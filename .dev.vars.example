@@ -17,3 +17,9 @@ EBAY_REFRESH_TOKEN_2=""
 
 # Protects POST /api/sync/ebay when called from outside the admin panel.
 SYNC_TOKEN="dev-sync-token"
+
+# Parcel2Go (My Account → API on parcel2go.com) — pushes paid orders across
+# so they're ready to book. Client ID may include a ":AppName" suffix as
+# issued.
+PARCEL2GO_CLIENT_ID="..."
+PARCEL2GO_CLIENT_SECRET="..."

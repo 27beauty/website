@@ -28,6 +28,8 @@ export interface Env {
   EBAY_REFRESH_TOKEN?: string;
   EBAY_REFRESH_TOKEN_2?: string;
   SYNC_TOKEN?: string;
+  PARCEL2GO_CLIENT_ID?: string;
+  PARCEL2GO_CLIENT_SECRET?: string;
 }
 
 /** Hono context variables set by middleware in src/index.ts. */
@@ -138,6 +140,10 @@ export interface Order {
   carrier: string | null;
   notes: string | null;
   stock_applied: number;
+  parcel2go_order_id: string | null;
+  parcel2go_payment_url: string | null;
+  parcel2go_status: string | null;
+  parcel2go_error: string | null;
   created_at: string;
   updated_at: string;
 }

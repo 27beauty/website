@@ -5,6 +5,7 @@ import { AdminLayout, AdminPrintPage, CsrfField } from '../../ui/admin-layout';
 import { formatPence } from '../../lib/money';
 import { clampInt } from '../../lib/util';
 import { getOrderWithItems, type OrderWithItems } from '../../lib/orders';
+import { pushOrderToParcel2Go } from '../../lib/parcel2go';
 
 /**
  * Order management. Listing needs a status + free-text (order number/email)
@@ -282,6 +283,30 @@ orders.get('/:id', async (c) => {
                 Tracking: <strong>{order.tracking_number}</strong> ({order.carrier ?? 'carrier not set'})
               </p>
             ) : null}
+
+            <h3>Parcel2Go</h3>
+            {order.parcel2go_status === 'pushed' ? (
+              <p>
+                Pushed as order <strong>{order.parcel2go_order_id}</strong>.{' '}
+                {order.parcel2go_payment_url ? (
+                  <a href={order.parcel2go_payment_url} target="_blank" rel="noreferrer">
+                    Book shipping on Parcel2Go →
+                  </a>
+                ) : (
+                  'No payment link returned.'
+                )}
+              </p>
+            ) : order.parcel2go_status === 'error' ? (
+              <p class="notice notice-bad">Push failed: {order.parcel2go_error}</p>
+            ) : (
+              <p class="muted">Not pushed yet.</p>
+            )}
+            <form method="post" action={`/admin/orders/${id}/parcel2go`}>
+              <CsrfField token={admin.csrf} />
+              <button class="btn btn-sm btn-secondary" type="submit">
+                {order.parcel2go_status === 'pushed' ? 'Push again' : 'Push to Parcel2Go'}
+              </button>
+            </form>
           </div>
 
           <div class="admin-panel">
@@ -342,6 +367,34 @@ orders.get('/:id', async (c) => {
       </div>
     </AdminLayout>,
   );
+});
+
+orders.post('/:id/parcel2go', async (c) => {
+  const id = Number(c.req.param('id'));
+  const body = await c.req.parseBody();
+  if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
+    return c.redirect(`/admin/orders/${id}?err=` + encodeURIComponent('Your session expired — please try again.'), 303);
+  }
+  const order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first<Order>();
+  if (!order) return c.redirect('/admin/orders', 303);
+
+  try {
+    const result = await pushOrderToParcel2Go(c.env, order);
+    await c.env.DB.prepare(
+      `UPDATE orders
+         SET parcel2go_order_id = ?, parcel2go_payment_url = ?, parcel2go_status = 'pushed', parcel2go_error = NULL
+       WHERE id = ?`,
+    )
+      .bind(result.orderId, result.paymentUrl, id)
+      .run();
+    return c.redirect(`/admin/orders/${id}?msg=` + encodeURIComponent('Pushed to Parcel2Go.'), 303);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await c.env.DB.prepare(`UPDATE orders SET parcel2go_status = 'error', parcel2go_error = ? WHERE id = ?`)
+      .bind(message.slice(0, 1000), id)
+      .run();
+    return c.redirect(`/admin/orders/${id}?err=` + encodeURIComponent(`Parcel2Go: ${message}`), 303);
+  }
 });
 
 orders.post('/:id/fulfil', async (c) => {
