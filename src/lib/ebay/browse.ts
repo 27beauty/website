@@ -31,10 +31,13 @@ const MARKETPLACE_ID = 'EBAY_GB';
 // Common words/numbers run one at a time against the seller filter and
 // merged by itemId, to approximate "all of this seller's listings" (see the
 // KNOWN LIMITATION note above — Browse API has no true seller-listing call).
-const QUERY_TERMS = [
-  'new', 'and', 'for', 'with', 'the', 'set', 'pack', 'uk',
-  '1', '2', '3', 'black', 'white', 'brand', 'of', 'to', 'in', 'size',
-];
+// Kept short and ordered by measured marginal coverage (tested against real
+// seller accounts) because each term costs a Workers subrequest, and a sync
+// run processes every active account in one invocation, sharing one
+// subrequest budget (50 on the Workers Free plan).
+const QUERY_TERMS = ['new', 'and', 'for', 'with', 'the', 'pack', '1', '2', '3'];
+/** Stop trying further terms for an account once this many in a row add nothing new. */
+const PLATEAU_TERM_LIMIT = 2;
 
 export interface BrowseFetchOptions {
   /** Overall cap on listings pulled for this account this run. */
@@ -68,8 +71,10 @@ export async function fetchBrowseListings(
   let rateLimited = false;
   const filter = encodeURIComponent(`sellers:{${account.seller_username}}`);
 
+  let plateauStreak = 0;
   termLoop: for (const term of QUERY_TERMS) {
     if (summariesById.size >= options.maxListings) break;
+    const sizeBeforeTerm = summariesById.size;
     let offset = 0;
     while (summariesById.size < options.maxListings) {
       const limit = Math.min(PAGE_SIZE, options.maxListings - summariesById.size);
@@ -90,6 +95,12 @@ export async function fetchBrowseListings(
       for (const item of page) summariesById.set(item.itemId, item);
       if (page.length < limit) break; // reached the last page for this term
       offset += page.length;
+    }
+    if (summariesById.size === sizeBeforeTerm && sizeBeforeTerm > 0) {
+      plateauStreak++;
+      if (plateauStreak >= PLATEAU_TERM_LIMIT) break;
+    } else {
+      plateauStreak = 0;
     }
   }
   const summaries = [...summariesById.values()];

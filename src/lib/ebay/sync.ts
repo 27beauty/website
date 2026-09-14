@@ -18,8 +18,14 @@ export interface SyncResult {
 
 /** Total listings fetched across the whole run, so a cron invocation stays inside Workers CPU/subrequest limits. */
 const MAX_LISTINGS_PER_RUN = 1000;
-/** Per-account cap on the extra GET /item/{id} enrichment call (Browse mode), only spent on newly-created products. */
-const MAX_ENRICH_CALLS_PER_ACCOUNT = 20;
+/**
+ * Per-account cap on the extra GET /item/{id} enrichment call (Browse mode),
+ * only spent on newly-created products. Kept modest because Browse mode's
+ * search itself now costs several subrequests per account (see browse.ts's
+ * QUERY_TERMS) and a run processes every active account in one invocation,
+ * sharing one Workers subrequest budget (50 on the Free plan).
+ */
+const MAX_ENRICH_CALLS_PER_ACCOUNT = 10;
 /** D1 batch() calls are chunked to this many statements to stay well under request-size limits. */
 const BATCH_CHUNK_SIZE = 25;
 
