@@ -123,7 +123,12 @@ async function syncAccount(
   opts: { rules: CategoryRule[]; importOutOfStock: boolean; maxListings: number },
 ): Promise<AccountSyncOutcome> {
   const errors: string[] = [];
-  const existingRows = await listAccountProducts(env, account.label);
+  // Products are matched to an account by this key, stored in ebay_account.
+  // Uses seller_username (the account's stable eBay identity) rather than
+  // account.label (an editable display name) — renaming an account's label
+  // must not orphan its already-imported products.
+  const accountKey = account.seller_username || `account:${account.id}`;
+  const existingRows = await listAccountProducts(env, accountKey);
   const existingItemIds = new Set(
     existingRows.map((r) => r.ebay_item_id).filter((id): id is string => Boolean(id)),
   );
@@ -194,7 +199,7 @@ async function syncAccount(
         JSON.stringify(listing.images),
         status,
         listing.itemId,
-        account.label,
+        accountKey,
         listing.itemWebUrl,
       ),
     );
