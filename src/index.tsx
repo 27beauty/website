@@ -122,7 +122,7 @@ app.onError((err, c) => {
       <div class="empty">
         <span class="emoji">⚠️</span>
         <h1>Something went wrong</h1>
-        <p class="muted">Please try again. If it keeps happening, email hello@27beauty.co.uk.</p>
+        <p class="muted">Please try again. If it keeps happening, email 27beautyltd@gmail.com.</p>
         <a class="btn" href="/">
           Back to the shop
         </a>

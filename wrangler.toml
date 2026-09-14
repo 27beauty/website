@@ -48,8 +48,10 @@ custom_domain = true
 [vars]
 SITE_NAME = "27beauty"
 SITE_URL = "https://27beauty.co.uk"
-SUPPORT_EMAIL = "hello@27beauty.co.uk"
+SUPPORT_EMAIL = "27beautyltd@gmail.com"
 CURRENCY = "GBP"
-# Free delivery at or above this order value (pence). 0 disables the threshold.
-FREE_SHIPPING_THRESHOLD_PENCE = "3000"
-SHIPPING_FLAT_PENCE = "349"
+# All UK delivery is free regardless of spend — flat rate is 0 and the
+# threshold is unused (kept at 0 = off) rather than deleted, since
+# settings.ts falls back to these vars if the DB setting is ever missing.
+FREE_SHIPPING_THRESHOLD_PENCE = "0"
+SHIPPING_FLAT_PENCE = "0"

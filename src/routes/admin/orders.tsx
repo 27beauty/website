@@ -570,7 +570,7 @@ orders.get('/:id/slip', async (c) => {
         </tbody>
       </table>
       <p class="faint" style="margin-top:24px;">
-        Thank you for shopping with 27beauty. Questions? hello@27beauty.co.uk
+        Thank you for shopping with 27beauty. Questions? 27beautyltd@gmail.com
       </p>
     </AdminPrintPage>,
   );

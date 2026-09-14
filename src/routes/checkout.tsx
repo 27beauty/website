@@ -158,7 +158,7 @@ async function checkoutClosed(c: Context<AppBindings>): Promise<Response | null>
         <h1>We've paused checkout</h1>
         <p class="muted">
           We're updating the shop and can't take orders for a moment. Your basket is saved — please
-          try again shortly, or email hello@27beauty.co.uk if you need something urgently.
+          try again shortly, or email 27beautyltd@gmail.com if you need something urgently.
         </p>
         <a class="btn" href="/cart">
           Back to your basket

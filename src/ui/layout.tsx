@@ -56,7 +56,7 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = (props) => {
         </a>
         <div class="topbar">
           <div class="wrap">
-            <span>Free UK delivery on orders over £30 · Got a QR card? Use your code at checkout.</span>
+            <span>Free UK delivery on every order · Got a QR card? Use your code at checkout.</span>
           </div>
         </div>
         <header class="site-header">

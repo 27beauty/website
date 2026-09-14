@@ -925,7 +925,7 @@ storefront.get('/qr/:code', async (c) => qrLanding(c, c.req.param('code')));
 storefront.get('/pages/:slug', async (c) => {
   const slug = c.req.param('slug');
   const categories = await listCategories(c.env);
-  const email = c.env.SUPPORT_EMAIL || 'hello@27beauty.co.uk';
+  const email = c.env.SUPPORT_EMAIL || '27beautyltd@gmail.com';
   const layoutFor = (title: string, description: string, body: unknown) =>
     c.html(
       <Layout
@@ -955,8 +955,7 @@ storefront.get('/pages/:slug', async (c) => {
           </p>
           <h2>Delivery costs</h2>
           <p>
-            Standard UK delivery is charged at checkout and shown before you pay. Orders over the free delivery
-            threshold shown in your basket qualify for free standard delivery automatically — no code needed.
+            Every order gets free standard UK delivery, automatically — no minimum spend and no code needed.
           </p>
           <h2>How long delivery takes</h2>
           <p>
