@@ -60,7 +60,9 @@ export async function verifyPayload<T>(token: string | undefined, secret: string
   }
 }
 
-const PBKDF2_ITERATIONS = 150_000;
+// Cloudflare Workers' WebCrypto PBKDF2 implementation rejects iteration
+// counts above 100,000 (throws NotSupportedError), unlike Node's.
+const PBKDF2_ITERATIONS = 100_000;
 
 /** Password hash format: pbkdf2$<iterations>$<saltB64>$<hashB64>. */
 export async function hashPassword(password: string, iterations = PBKDF2_ITERATIONS): Promise<string> {

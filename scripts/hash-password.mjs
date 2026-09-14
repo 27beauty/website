@@ -2,7 +2,7 @@
 /**
  * Hashes a password in the exact format src/lib/crypto.ts expects:
  *   pbkdf2$<iterations>$<saltB64url>$<hashB64url>
- * PBKDF2-SHA256, 150000 iterations, 16-byte salt, 256-bit key, base64url
+ * PBKDF2-SHA256, 100000 iterations, 16-byte salt, 256-bit key, base64url
  * (no padding). Uses the platform Web Crypto API only — no dependencies —
  * so the owner can run it with plain `node` to seed the first admin account
  * straight into D1 without needing the app running:
@@ -13,7 +13,9 @@
  *   wrangler d1 execute DB --remote --command "<the printed SQL>"
  */
 
-const PBKDF2_ITERATIONS = 150_000;
+// Must stay <= 100,000: Cloudflare Workers' WebCrypto PBKDF2 rejects higher
+// iteration counts at verify time, unlike Node's (see src/lib/crypto.ts).
+const PBKDF2_ITERATIONS = 100_000;
 const encoder = new TextEncoder();
 
 function base64UrlEncode(bytes) {

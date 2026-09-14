@@ -187,7 +187,7 @@ describe('password hashing round trip (src/lib/crypto.ts)', () => {
     const parts = hash.split('$');
     expect(parts).toHaveLength(4);
     expect(parts[0]).toBe('pbkdf2');
-    expect(parts[1]).toBe('150000');
+    expect(parts[1]).toBe('100000');
   });
 
   it('verifyPassword accepts the correct password and rejects a wrong one', async () => {

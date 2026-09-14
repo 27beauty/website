@@ -24,7 +24,7 @@ const LOGIN_MAX_ATTEMPTS = 10;
  * for a real email with the wrong password, so timing can't reveal which.
  */
 const DUMMY_HASH =
-  'pbkdf2$150000$NmlhFgP_C9p82u8tlTj5Jw$GgA9v6msCUpOluMYjB3xfKP77Do-dkx80tu7KTU0lqM';
+  'pbkdf2$100000$Iax7kqGc5vF3pYENI5XN7g$uCcv1Iexru_ztoOz-fOuFy265hkzCNAC_93nEuA23S4';
 
 function sessionKey(token: string): string {
   return `admin:session:${token}`;

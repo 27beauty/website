@@ -36,6 +36,14 @@ bucket_name = "27beauty-media"
 [triggers]
 crons = ["*/30 * * * *"]
 
+[[routes]]
+pattern = "27beauty.co.uk"
+custom_domain = true
+
+[[routes]]
+pattern = "www.27beauty.co.uk"
+custom_domain = true
+
 [vars]
 SITE_NAME = "27beauty"
 SITE_URL = "https://27beauty.co.uk"
