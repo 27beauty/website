@@ -56,7 +56,6 @@ async function renderCheckoutPage(
                   name="email"
                   type="email"
                   autocomplete="email"
-                  required
                   value={values.email}
                 />
                 <p class="field-hint">Your order confirmation goes here.</p>
@@ -68,7 +67,6 @@ async function renderCheckoutPage(
                   name="name"
                   type="text"
                   autocomplete="name"
-                  required
                   value={values.name}
                 />
               </div>

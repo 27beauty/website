@@ -354,11 +354,19 @@ textarea { min-height: 120px; resize: vertical; }
 .panel + .panel { margin-top: var(--space-4); }
 .panel h2, .panel h3 { margin-top: 0; }
 .summary { position: sticky; top: 88px; }
-.line { display: flex; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--line); }
+.line { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--line); }
 .line:last-child { border-bottom: 0; }
 .line img { width: 64px; height: 64px; object-fit: contain; background: var(--surface-2); border-radius: 8px; flex: none; }
 .line-body { flex: 1; min-width: 0; }
 .line-title { font-weight: 600; font-size: .95rem; }
+.line-price { flex: none; font-size: 1.05rem; }
+.line-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin-top: 8px; }
+.qty-stepper { display: flex; align-items: center; gap: 8px; }
+.link-btn {
+  background: none; border: none; padding: 0; font: inherit; font-size: .85rem;
+  color: var(--ink-faint); text-decoration: underline; cursor: pointer;
+}
+.link-btn:hover { color: var(--ink-soft); }
 .totals { list-style: none; padding: 0; margin: var(--space-3) 0 0; font-size: .95rem; }
 .totals li { display: flex; justify-content: space-between; padding: 6px 0; }
 .totals .total { border-top: 1px solid var(--line); margin-top: 6px; padding-top: var(--space-3); font-size: 1.15rem; font-weight: 700; }

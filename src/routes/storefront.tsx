@@ -607,34 +607,34 @@ async function renderCartPage(c: Context<AppBindings>, notice?: { message: strin
                     <a href={`/product/${item.product.slug}`}>{item.product.title}</a>
                   </div>
                   <div class="muted small">{formatPence(item.product.price_pence)} each</div>
-                  <form method="post" action="/cart/update" class="row" style="margin-top:6px">
-                    <input type="hidden" name="product_id" value={item.product.id} />
-                    <label class="sr-only" for={`qty-${item.product.id}`}>
-                      Quantity for {item.product.title}
-                    </label>
-                    <input
-                      id={`qty-${item.product.id}`}
-                      type="number"
-                      name="quantity"
-                      min={0}
-                      max={Math.max(item.product.stock, item.quantity)}
-                      value={item.quantity}
-                      style="width:76px"
-                    />
-                    <button class="btn btn-secondary btn-sm" type="submit">
-                      Update
-                    </button>
-                  </form>
+                  <div class="line-actions">
+                    <form method="post" action="/cart/update" class="qty-stepper">
+                      <input type="hidden" name="product_id" value={item.product.id} />
+                      <label class="sr-only" for={`qty-${item.product.id}`}>
+                        Quantity for {item.product.title}
+                      </label>
+                      <input
+                        id={`qty-${item.product.id}`}
+                        type="number"
+                        name="quantity"
+                        min={0}
+                        max={Math.max(item.product.stock, item.quantity)}
+                        value={item.quantity}
+                        style="width:60px"
+                      />
+                      <button class="btn btn-secondary btn-sm" type="submit">
+                        Update
+                      </button>
+                    </form>
+                    <form method="post" action="/cart/remove">
+                      <input type="hidden" name="product_id" value={item.product.id} />
+                      <button class="link-btn" type="submit">
+                        Remove
+                      </button>
+                    </form>
+                  </div>
                 </div>
-                <div class="row" style="flex-direction:column;align-items:flex-end;gap:8px">
-                  <strong class="nowrap">{formatPence(item.lineTotalPence)}</strong>
-                  <form method="post" action="/cart/remove">
-                    <input type="hidden" name="product_id" value={item.product.id} />
-                    <button class="btn btn-secondary btn-sm" type="submit">
-                      Remove
-                    </button>
-                  </form>
-                </div>
+                <strong class="line-price nowrap">{formatPence(item.lineTotalPence)}</strong>
               </div>
             ))}
           </div>
