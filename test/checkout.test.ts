@@ -31,6 +31,7 @@ function makeProduct(overrides: Partial<Product> = {}): Product {
     featured: 0,
     source: 'manual',
     ebay_item_id: null,
+    ebay_sku: null,
     ebay_account: null,
     ebay_url: null,
     ebay_synced_at: null,

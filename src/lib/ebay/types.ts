@@ -34,6 +34,8 @@ export interface NormalisedListing {
   /** eBay's own leaf category name/id, when available, for mapCategory(). */
   ebayCategoryId: string | null;
   ebayCategoryName: string | null;
+  /** Sell mode only — the seller's own SKU, needed to write stock back to eBay. Null in browse mode. */
+  sku: string | null;
 }
 
 /** Minimal shape of a Browse API item_summary entry (search results page). */

@@ -155,5 +155,6 @@ export function normaliseBrowseItem(
     itemWebUrl: summary.itemWebUrl ?? summary.itemAffiliateWebUrl ?? null,
     ebayCategoryId: category?.categoryId ?? null,
     ebayCategoryName: category?.categoryName ?? null,
+    sku: null,
   };
 }

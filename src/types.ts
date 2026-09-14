@@ -80,6 +80,7 @@ export interface Product {
   featured: number;
   source: ProductSource;
   ebay_item_id: string | null;
+  ebay_sku: string | null;
   ebay_account: string | null;
   ebay_url: string | null;
   ebay_synced_at: string | null;

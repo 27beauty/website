@@ -19,6 +19,7 @@ function listing(overrides: Partial<NormalisedListing> = {}): NormalisedListing 
     itemWebUrl: null,
     ebayCategoryId: null,
     ebayCategoryName: null,
+    sku: null,
     ...overrides,
   };
 }

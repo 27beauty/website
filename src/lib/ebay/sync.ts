@@ -188,8 +188,8 @@ async function syncAccount(
       env.DB.prepare(
         `INSERT INTO products
            (slug, title, description, category_id, price_pence, stock, image_url, images_json,
-            status, source, ebay_item_id, ebay_account, ebay_url, ebay_synced_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ebay', ?, ?, ?, datetime('now'))`,
+            status, source, ebay_item_id, ebay_sku, ebay_account, ebay_url, ebay_synced_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ebay', ?, ?, ?, ?, datetime('now'))`,
       ).bind(
         slug,
         listing.title,
@@ -201,6 +201,7 @@ async function syncAccount(
         JSON.stringify(listing.images),
         status,
         listing.itemId,
+        listing.sku,
         accountKey,
         listing.itemWebUrl,
       ),
@@ -237,11 +238,12 @@ async function syncAccount(
     sets.push(
       `status = CASE WHEN status = 'archived' THEN 'active' ELSE status END`,
       `ebay_miss_count = 0`,
+      `ebay_sku = ?`,
       `ebay_url = ?`,
       `ebay_synced_at = datetime('now')`,
       `updated_at = datetime('now')`,
     );
-    values.push(listing.itemWebUrl);
+    values.push(listing.sku, listing.itemWebUrl);
     values.push(product.id);
     statements.push(
       env.DB.prepare(`UPDATE products SET ${sets.join(', ')} WHERE id = ?`).bind(...values),

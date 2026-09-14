@@ -6,6 +6,8 @@ import { markOrderCancelled, markOrderPaid } from '../lib/orders';
 import { findCoupon, recordRedemption } from '../lib/coupons';
 import { pushOrderToParcel2Go } from '../lib/parcel2go';
 import { getSetting } from '../lib/settings';
+import { updateEbayStock } from '../lib/ebay/inventory';
+import type { EbayAccount } from '../types';
 
 /** Inbound webhooks (Stripe). Mounted before any body-parsing middleware. */
 export const webhooks = new Hono<AppBindings>();
@@ -74,6 +76,51 @@ async function handlePaidSession(env: AppBindings['Bindings'], session: Stripe.C
 
   if (transitioned && order) {
     await pushOrderToParcel2GoBestEffort(env, order.id);
+    await pushStockToEbayBestEffort(env, order.id);
+  }
+}
+
+/**
+ * Pushes the order's decremented stock back to eBay for any sell-mode
+ * account — the "centralised quantity" half of the eBay sync: a sale on our
+ * own site now reduces the seller's eBay quantity too, not just the other
+ * way round. Silently does nothing for browse-mode accounts (no write
+ * capability there) or products with no eBay SKU on record. Never lets a
+ * failure here affect the payment flow.
+ */
+async function pushStockToEbayBestEffort(env: AppBindings['Bindings'], orderId: number) {
+  const { results } = await env.DB.prepare(
+    `SELECT p.ebay_sku, p.ebay_account, p.stock
+       FROM order_items oi
+       JOIN products p ON p.id = oi.product_id
+      WHERE oi.order_id = ? AND p.source = 'ebay' AND p.ebay_sku IS NOT NULL`,
+  )
+    .bind(orderId)
+    .all<{ ebay_sku: string; ebay_account: string | null; stock: number }>();
+  if (!results || results.length === 0) return;
+
+  const byAccount = new Map<string, { sku: string; quantity: number }[]>();
+  for (const row of results) {
+    if (!row.ebay_account) continue;
+    const list = byAccount.get(row.ebay_account) ?? [];
+    list.push({ sku: row.ebay_sku, quantity: row.stock });
+    byAccount.set(row.ebay_account, list);
+  }
+
+  for (const [seller, updates] of byAccount) {
+    const account = await env.DB.prepare(
+      `SELECT * FROM ebay_accounts WHERE seller_username = ? AND mode = 'sell' AND active = 1`,
+    )
+      .bind(seller)
+      .first<EbayAccount>();
+    if (!account) continue; // browse mode, or account not found — nothing to write to
+
+    try {
+      const { errors } = await updateEbayStock(env, account, updates);
+      if (errors.length) console.error(`eBay stock push (${seller}) had errors:`, errors.join('; '));
+    } catch (err) {
+      console.error(`eBay stock push (${seller}) failed:`, err instanceof Error ? err.message : err);
+    }
   }
 }
 
