@@ -1,12 +1,20 @@
 /**
  * Browse-mode client: application access token + Browse API paging.
  *
- * KNOWN LIMITATION: the Browse API is a public search surface, not a seller
- * inventory feed. It only returns items eBay's search indexes as belonging to
- * `sellers:{username}`, exposes stock as a coarse availability bucket rather
- * than an exact quantity (see pricing.ts availabilityToStock), and item
- * detail (description, extra images) costs a second call per item — so it is
- * only fetched for newly-created products, bounded by `maxEnrichCalls`.
+ * KNOWN LIMITATION: the Browse API's item_summary/search is a keyword search
+ * surface, not a seller-inventory listing — it rejects a request that has
+ * only a `sellers` filter and no `q`/`category_ids`/`epid`/`gtin` (HTTP 400
+ * errorId 12001), and even with a `q` it only returns items whose title
+ * matches that term. There is no "all items from this seller" call available
+ * without seller OAuth consent (sell mode). To approximate full coverage we
+ * run the seller filter across a fixed set of common English words/numbers
+ * (QUERY_TERMS below) and merge the results by itemId — this finds most of a
+ * typical catalogue but is not guaranteed exhaustive. It also exposes stock
+ * as a coarse availability bucket rather than an exact quantity (see
+ * pricing.ts availabilityToStock), and item detail (description, extra
+ * images) costs a second call per item — so it is only fetched for
+ * newly-created products, bounded by `maxEnrichCalls`. For exact stock and
+ * complete catalogue coverage, use sell mode instead.
  */
 
 import type { Env, EbayAccount } from '../../types';
@@ -19,6 +27,14 @@ const BROWSE_SEARCH_URL = 'https://api.ebay.com/buy/browse/v1/item_summary/searc
 const BROWSE_ITEM_URL = 'https://api.ebay.com/buy/browse/v1/item';
 const PAGE_SIZE = 200;
 const MARKETPLACE_ID = 'EBAY_GB';
+
+// Common words/numbers run one at a time against the seller filter and
+// merged by itemId, to approximate "all of this seller's listings" (see the
+// KNOWN LIMITATION note above — Browse API has no true seller-listing call).
+const QUERY_TERMS = [
+  'new', 'and', 'for', 'with', 'the', 'set', 'pack', 'uk',
+  '1', '2', '3', 'black', 'white', 'brand', 'of', 'to', 'in', 'size',
+];
 
 export interface BrowseFetchOptions {
   /** Overall cap on listings pulled for this account this run. */
@@ -48,31 +64,35 @@ export async function fetchBrowseListings(
     'X-EBAY-C-MARKETPLACE-ID': MARKETPLACE_ID,
   };
 
-  const summaries: BrowseItemSummary[] = [];
-  let offset = 0;
+  const summariesById = new Map<string, BrowseItemSummary>();
   let rateLimited = false;
+  const filter = encodeURIComponent(`sellers:{${account.seller_username}}`);
 
-  while (summaries.length < options.maxListings) {
-    const limit = Math.min(PAGE_SIZE, options.maxListings - summaries.length);
-    const filter = encodeURIComponent(`sellers:${account.seller_username}`);
-    const url = `${BROWSE_SEARCH_URL}?filter=${filter}&limit=${limit}&offset=${offset}`;
-    let res: Response;
-    try {
-      res = await fetchWithRetry(url, { headers: searchHeaders });
-    } catch (err) {
-      if (err instanceof EbayRateLimitError) {
-        rateLimited = true;
-        break;
+  termLoop: for (const term of QUERY_TERMS) {
+    if (summariesById.size >= options.maxListings) break;
+    let offset = 0;
+    while (summariesById.size < options.maxListings) {
+      const limit = Math.min(PAGE_SIZE, options.maxListings - summariesById.size);
+      const url = `${BROWSE_SEARCH_URL}?q=${encodeURIComponent(term)}&filter=${filter}&limit=${limit}&offset=${offset}`;
+      let res: Response;
+      try {
+        res = await fetchWithRetry(url, { headers: searchHeaders });
+      } catch (err) {
+        if (err instanceof EbayRateLimitError) {
+          rateLimited = true;
+          break termLoop;
+        }
+        throw err;
       }
-      throw err;
+      if (!res.ok) throw new Error(`eBay Browse search failed: HTTP ${res.status}`);
+      const json = (await res.json()) as BrowseSearchResponse;
+      const page = json.itemSummaries ?? [];
+      for (const item of page) summariesById.set(item.itemId, item);
+      if (page.length < limit) break; // reached the last page for this term
+      offset += page.length;
     }
-    if (!res.ok) throw new Error(`eBay Browse search failed: HTTP ${res.status}`);
-    const json = (await res.json()) as BrowseSearchResponse;
-    const page = json.itemSummaries ?? [];
-    summaries.push(...page);
-    if (page.length < limit) break; // reached the last page
-    offset += page.length;
   }
+  const summaries = [...summariesById.values()];
 
   const listings: NormalisedListing[] = [];
   let enrichCalls = 0;
