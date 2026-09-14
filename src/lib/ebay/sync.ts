@@ -26,6 +26,8 @@ const MAX_LISTINGS_PER_RUN = 1000;
  * sharing one Workers subrequest budget (50 on the Free plan).
  */
 const MAX_ENRICH_CALLS_PER_ACCOUNT = 10;
+/** Consecutive missed runs before a product is archived — see the note at diff.toEnd below. */
+const MISS_THRESHOLD = 144;
 /** D1 batch() calls are chunked to this many statements to stay well under request-size limits. */
 const BATCH_CHUNK_SIZE = 25;
 
@@ -228,7 +230,17 @@ async function syncAccount(
       sets.push(`${key} = ?`);
       values.push(value);
     }
-    sets.push(`ebay_url = ?`, `ebay_synced_at = datetime('now')`, `updated_at = datetime('now')`);
+    // Confirmed present in this run: un-archive it if a previous run wrongly
+    // archived it (see the miss-count note below) or it was archived after
+    // genuinely selling out and has now been relisted, and clear its miss
+    // streak.
+    sets.push(
+      `status = CASE WHEN status = 'archived' THEN 'active' ELSE status END`,
+      `ebay_miss_count = 0`,
+      `ebay_url = ?`,
+      `ebay_synced_at = datetime('now')`,
+      `updated_at = datetime('now')`,
+    );
     values.push(listing.itemWebUrl);
     values.push(product.id);
     statements.push(
@@ -237,14 +249,29 @@ async function syncAccount(
     updated++;
   }
 
+  // Browse mode's search is a keyword approximation, not a full inventory
+  // listing (see browse.ts) — a product missing from one run's results is
+  // routine, not evidence it was delisted. Only archive after it's been
+  // absent for MISS_THRESHOLD consecutive runs (~24h at the current 10-min
+  // cron), which is long enough that occasional incomplete search coverage
+  // can't false-positive an in-stock product off the storefront.
+  let ended = 0;
   for (const row of diff.toEnd) {
-    statements.push(
-      env.DB.prepare(
-        `UPDATE products
-         SET stock = 0, status = 'archived', ebay_synced_at = datetime('now'), updated_at = datetime('now')
-         WHERE id = ?`,
-      ).bind(row.id),
-    );
+    const missCount = row.ebay_miss_count + 1;
+    if (missCount >= MISS_THRESHOLD) {
+      ended++;
+      statements.push(
+        env.DB.prepare(
+          `UPDATE products
+           SET stock = 0, status = 'archived', ebay_miss_count = ?, ebay_synced_at = datetime('now'), updated_at = datetime('now')
+           WHERE id = ?`,
+        ).bind(missCount, row.id),
+      );
+    } else {
+      statements.push(
+        env.DB.prepare(`UPDATE products SET ebay_miss_count = ? WHERE id = ?`).bind(missCount, row.id),
+      );
+    }
   }
 
   for (const chunk of chunkStatements(statements, BATCH_CHUNK_SIZE)) {
@@ -255,7 +282,7 @@ async function syncAccount(
     .bind(account.id)
     .run();
 
-  return { created, updated, ended: diff.toEnd.length, fetched: listings.length, errors };
+  return { created, updated, ended, fetched: listings.length, errors };
 }
 
 async function listActiveAccounts(env: Env): Promise<EbayAccount[]> {
@@ -265,7 +292,7 @@ async function listActiveAccounts(env: Env): Promise<EbayAccount[]> {
 
 async function listAccountProducts(env: Env, accountLabel: string): Promise<ExistingProductRow[]> {
   const { results } = await env.DB.prepare(
-    `SELECT id, ebay_item_id, price_locked, stock_locked, content_locked
+    `SELECT id, ebay_item_id, price_locked, stock_locked, content_locked, ebay_miss_count
      FROM products WHERE source = 'ebay' AND ebay_account = ?`,
   )
     .bind(accountLabel)

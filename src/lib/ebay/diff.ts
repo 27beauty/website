@@ -12,6 +12,7 @@ export interface ExistingProductRow {
   price_locked: number;
   stock_locked: number;
   content_locked: number;
+  ebay_miss_count: number;
 }
 
 export interface ListingDiff {

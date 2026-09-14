@@ -230,7 +230,7 @@ describe('resolveUpdateFields (lock rules)', () => {
 
 describe('diffListings', () => {
   function row(overrides: Partial<ExistingProductRow> = {}): ExistingProductRow {
-    return { id: 1, ebay_item_id: 'ITEM-1', price_locked: 0, stock_locked: 0, content_locked: 0, ...overrides };
+    return { id: 1, ebay_item_id: 'ITEM-1', price_locked: 0, stock_locked: 0, content_locked: 0, ebay_miss_count: 0, ...overrides };
   }
 
   it('treats a listing with no matching product as a create', () => {
