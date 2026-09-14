@@ -32,9 +32,10 @@ id = "c2bbd1afeb964a1ea6c2fb36138936aa"
 binding = "MEDIA"
 bucket_name = "27beauty-media"
 
-# eBay sync runs every 30 minutes.
+# eBay sync runs every 10 minutes. Kept well under eBay's default Browse API
+# daily call quota (~5,000/day/app) — see docs/ebay-setup.md.
 [triggers]
-crons = ["*/30 * * * *"]
+crons = ["*/10 * * * *"]
 
 [[routes]]
 pattern = "27beauty.co.uk"
