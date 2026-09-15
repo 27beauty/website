@@ -119,44 +119,66 @@ const TRUST_POINTS = [
 // Home
 // ---------------------------------------------------------------------------
 
+/** Homepage's beauty showcase pulls straight from this category — see db/seed.sql. */
+const BEAUTY_CATEGORY_SLUG = 'hair-beauty';
+
 storefront.get('/', async (c) => {
-  const [categories, categoryTiles, featured] = await Promise.all([
+  const [categories, categoryTiles, featured, beautyRes] = await Promise.all([
     listCategories(c.env),
     listCategoriesWithCounts(c.env),
     featuredOrNewest(c.env, 8),
+    queryProducts(c.env, { categorySlug: BEAUTY_CATEGORY_SLUG, sort: 'newest', limit: 8 }),
   ]);
+  const beautyProducts = beautyRes.items;
+  const otherCategoryTiles = categoryTiles.filter((cat) => cat.slug !== BEAUTY_CATEGORY_SLUG);
 
   return c.html(
     <Layout
-      title="27beauty — everyday brands, everyday prices"
-      description="Everyday brands at everyday prices — pet food, snacks, coffee, toys, beauty, DIY and garden, dispatched from the UK. Scanned a QR card? Get 10% off here."
+      title="27beauty — beauty & grooming essentials, everyday prices"
+      description="Genuine beauty and grooming brands at everyday prices, dispatched from the UK — plus the everyday extras we're known for on eBay. Scanned a QR card? Get 10% off here."
       categories={categories}
       cartCount={c.get('cartCount')}
       canonical={canonicalUrl(c.env, '/')}
       activeCategory="all"
     >
       <section class="hero">
-        <h1>Everyday brands. Everyday prices.</h1>
+        <h1>Beauty brands you know. Prices you'll love.</h1>
         <p>
-          27beauty ships genuine everyday brands straight from the UK — pet food, snacks, coffee and
-          tea, toys and games, beauty and grooming, DIY, garden and household. Bought
-          from us on a marketplace before? Your QR card is worth 10% off right here.
+          Genuine skincare, haircare and grooming brands, dispatched from the UK at everyday prices —
+          plus the household names we're already known for on the marketplaces. Bought from us
+          before? Your QR card is worth 10% off right here.
         </p>
-        <a class="btn btn-accent" href="/shop">
-          Shop all products
+        <a class="btn btn-accent" href={`/category/${BEAUTY_CATEGORY_SLUG}`}>
+          Shop beauty &amp; grooming
         </a>
       </section>
 
-      {categoryTiles.length ? (
-        <section class="stack" style="margin-bottom:32px">
-          <h2>Shop by category</h2>
-          <div class="cat-grid">
-            {categoryTiles.map((cat) => (
-              <CategoryTile category={cat} />
-            ))}
-          </div>
-        </section>
-      ) : null}
+      <section class="stack" style="margin-bottom:32px">
+        <div class="row-between">
+          <h2 style="margin-bottom:0">💄 Beauty &amp; grooming favourites</h2>
+          <a href={`/category/${BEAUTY_CATEGORY_SLUG}`}>Shop all beauty</a>
+        </div>
+        {beautyProducts.length ? (
+          <ProductGrid products={beautyProducts} />
+        ) : (
+          <EmptyState emoji="💄" title="New beauty stock arriving soon" message="We're still filling these shelves.">
+            <a class="btn" href="/shop">
+              Browse the shop
+            </a>
+          </EmptyState>
+        )}
+      </section>
+
+      <section class="panel" style="margin-bottom:32px">
+        <h2>📇 Scanned a QR card?</h2>
+        <p class="muted">
+          Every 27beauty parcel includes a QR card. Scan it, or enter the code printed on it at checkout,
+          and 10% comes straight off your order — our way of saying thanks for shopping with us directly.
+        </p>
+        <a class="btn btn-secondary" href="/qr">
+          I've got a code
+        </a>
+      </section>
 
       <section class="stack" style="margin-bottom:32px">
         <div class="row-between">
@@ -174,16 +196,16 @@ storefront.get('/', async (c) => {
         )}
       </section>
 
-      <section class="panel" style="margin-bottom:24px">
-        <h2>📇 Scanned a QR card?</h2>
-        <p class="muted">
-          Every 27beauty parcel includes a QR card. Scan it, or enter the code printed on it at checkout,
-          and 10% comes straight off your order — our way of saying thanks for shopping with us directly.
-        </p>
-        <a class="btn btn-secondary" href="/qr">
-          I've got a code
-        </a>
-      </section>
+      {otherCategoryTiles.length ? (
+        <section class="stack" style="margin-bottom:32px">
+          <h2>Everything else, all in one place</h2>
+          <div class="cat-grid">
+            {otherCategoryTiles.map((cat) => (
+              <CategoryTile category={cat} />
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <ul class="trust-list">
         {TRUST_POINTS.map((point) => (
