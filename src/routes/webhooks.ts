@@ -191,7 +191,13 @@ webhooks.post('/webhooks/stripe', async (c) => {
     case 'checkout.session.expired':
     case 'checkout.session.async_payment_failed': {
       const session = event.data.object as Stripe.Checkout.Session;
-      await markOrderCancelled(env, { sessionId: session.id });
+      await markOrderCancelled(env, {
+        sessionId: session.id,
+        email: session.customer_details?.email ?? session.customer_email ?? null,
+        name: session.customer_details?.name ?? null,
+        phone: session.customer_details?.phone ?? null,
+        recoveryUrl: session.after_expiration?.recovery?.url ?? null,
+      });
       break;
     }
     default:

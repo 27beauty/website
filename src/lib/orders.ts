@@ -182,15 +182,35 @@ export async function markOrderPaid(env: Env, input: MarkOrderPaidInput): Promis
 
 export async function markOrderCancelled(
   env: Env,
-  input: { sessionId?: string; orderId?: number },
+  input: {
+    sessionId?: string;
+    orderId?: number;
+    email?: string | null;
+    name?: string | null;
+    phone?: string | null;
+    recoveryUrl?: string | null;
+  },
 ): Promise<OrderTransitionResult> {
   const order = await findOrderForTransition(env, input);
   if (!order) return { order: null, transitioned: false };
 
   const res = await env.DB.prepare(
-    `UPDATE orders SET status = 'cancelled', updated_at = datetime('now') WHERE id = ? AND status = 'pending'`,
+    `UPDATE orders
+       SET status = 'cancelled',
+           email = COALESCE(?, email),
+           customer_name = COALESCE(?, customer_name),
+           phone = COALESCE(?, phone),
+           recovery_url = COALESCE(?, recovery_url),
+           updated_at = datetime('now')
+     WHERE id = ? AND status = 'pending'`,
   )
-    .bind(order.id)
+    .bind(
+      input.email ?? null,
+      input.name ?? null,
+      input.phone ?? null,
+      input.recoveryUrl ?? null,
+      order.id,
+    )
     .run();
 
   const transitioned = (res.meta.changes ?? 0) > 0;

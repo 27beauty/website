@@ -142,5 +142,8 @@ export async function createCheckoutSession(
     discounts: discountCouponId ? [{ coupon: discountCouponId }] : undefined,
     success_url: `${siteUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${siteUrl}/checkout/cancelled`,
+    // Lets us capture a resumable link for the "Open baskets" admin view
+    // when a session expires unpaid — see checkout.session.expired.
+    after_expiration: { recovery: { enabled: true } },
   });
 }

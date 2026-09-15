@@ -32,6 +32,60 @@ function statusPill(status: OrderStatus) {
   return <span class={`pill ${cls}`}>{status}</span>;
 }
 
+/**
+ * Step-by-step "what happened to this order" summary, since paid orders
+ * quietly trigger several automated things (stock, Parcel2Go) that
+ * otherwise aren't visible anywhere unless you know to scroll for them.
+ */
+function OrderFlow({ order }: { order: Order }) {
+  type Step = { label: string; state: 'done' | 'pending' | 'error' | 'skip'; detail?: string };
+
+  const isPaid = order.status === 'paid' || order.status === 'fulfilled' || order.status === 'refunded';
+  const isCancelled = order.status === 'cancelled';
+
+  const steps: Step[] = [
+    { label: 'Basket started', state: 'done', detail: order.created_at },
+    isCancelled
+      ? { label: 'Payment', state: 'error', detail: 'Never completed — expired, failed, or cancelled' }
+      : { label: 'Payment confirmed', state: isPaid ? 'done' : 'pending', detail: isPaid ? undefined : 'Waiting for checkout' },
+  ];
+
+  if (isPaid) {
+    steps.push({
+      label: 'Stock updated',
+      state: order.stock_applied ? 'done' : 'pending',
+    });
+    steps.push(
+      order.parcel2go_status === 'pushed'
+        ? { label: 'Pushed to Parcel2Go', state: 'done', detail: `Order ${order.parcel2go_order_id}` }
+        : order.parcel2go_status === 'error'
+          ? { label: 'Pushed to Parcel2Go', state: 'error', detail: order.parcel2go_error ?? undefined }
+          : { label: 'Pushed to Parcel2Go', state: 'pending', detail: 'Not sent yet' },
+    );
+    steps.push(
+      order.status === 'fulfilled'
+        ? { label: 'Fulfilled', state: 'done', detail: order.tracking_number ? `Tracking: ${order.tracking_number}` : undefined }
+        : order.status === 'refunded'
+          ? { label: 'Refunded', state: 'done' }
+          : { label: 'Fulfilled', state: 'pending', detail: 'Mark fulfilled once shipped' },
+    );
+  }
+
+  return (
+    <ul class="order-flow">
+      {steps.map((s) => (
+        <li class={`flow-${s.state === 'skip' ? 'pending' : s.state}`}>
+          <span class="flow-icon">{s.state === 'done' ? '✓' : s.state === 'error' ? '!' : '·'}</span>
+          <span>
+            <div class="flow-label">{s.label}</div>
+            {s.detail ? <div class="flow-detail">{s.detail}</div> : null}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function parseShipping(json: string | null): ShippingAddress | null {
   if (!json) return null;
   try {
@@ -41,15 +95,20 @@ function parseShipping(json: string | null): ShippingAddress | null {
   }
 }
 
+const PAID_STATUSES = ['paid', 'fulfilled', 'refunded'] as const;
+const BASKET_STATUSES = ['pending', 'cancelled'] as const;
+
 orders.get('/', async (c) => {
   const admin = getAdmin(c);
   const query = c.req.query();
   const page = clampInt(query.page, 1, 100000, 1);
-  const status = query.status;
+  const view = query.view === 'baskets' ? 'baskets' : 'orders';
+  const allowedStatuses: readonly string[] = view === 'baskets' ? BASKET_STATUSES : PAID_STATUSES;
+  const status = query.status && allowedStatuses.includes(query.status) ? query.status : undefined;
   const search = query.q?.trim();
 
-  const where: string[] = [];
-  const params: unknown[] = [];
+  const where: string[] = [`status IN (${allowedStatuses.map(() => '?').join(',')})`];
+  const params: unknown[] = [...allowedStatuses];
   if (status) {
     where.push('status = ?');
     params.push(status);
@@ -58,7 +117,7 @@ orders.get('/', async (c) => {
     where.push('(order_number LIKE ? OR lower(email) LIKE ?)');
     params.push(`%${search}%`, `%${search.toLowerCase()}%`);
   }
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const whereSql = `WHERE ${where.join(' AND ')}`;
   const offset = (page - 1) * PER_PAGE;
 
   const [countRow, listRes] = await Promise.all([
@@ -70,6 +129,7 @@ orders.get('/', async (c) => {
   const total = countRow?.n ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
   const flash = flashOf(c);
+  const results = listRes.results ?? [];
 
   const qs = (overrides: Record<string, string | number | undefined>) => {
     const p = new URLSearchParams();
@@ -82,11 +142,31 @@ orders.get('/', async (c) => {
   return c.html(
     <AdminLayout title="Orders" active="orders" admin={admin} msg={flash.msg} err={flash.err}>
       <div class="admin-head">
-        <h1>Orders</h1>
-        <p class="muted">{total} order{total === 1 ? '' : 's'}.</p>
+        <h1>{view === 'baskets' ? 'Open baskets' : 'Orders'}</h1>
+        <p class="muted">
+          {total} {view === 'baskets' ? 'basket' : 'order'}
+          {total === 1 ? '' : 's'}.
+        </p>
       </div>
 
+      <nav class="admin-tabs" aria-label="Order views">
+        <a href="/admin/orders" class={view === 'orders' ? 'active' : ''}>
+          Orders
+        </a>
+        <a href="/admin/orders?view=baskets" class={view === 'baskets' ? 'active' : ''}>
+          Open baskets
+        </a>
+      </nav>
+
+      {view === 'baskets' ? (
+        <p class="muted" style="margin-top:-8px;margin-bottom:16px;">
+          Baskets that started checkout but never paid — still in progress, expired, or abandoned at
+          Stripe. Most won't have an email unless the shopper got as far as typing one in before leaving.
+        </p>
+      ) : null}
+
       <form method="get" action="/admin/orders" class="filter-bar">
+        <input type="hidden" name="view" value={view} />
         <div class="field field-wide">
           <label for="q">Search</label>
           <input id="q" type="search" name="q" value={query.q ?? ''} placeholder="Order number or email…" />
@@ -95,7 +175,7 @@ orders.get('/', async (c) => {
           <label for="status">Status</label>
           <select id="status" name="status">
             <option value="">All</option>
-            {(['pending', 'paid', 'fulfilled', 'cancelled', 'refunded'] as const).map((s) => (
+            {allowedStatuses.map((s) => (
               <option value={s} selected={status === s}>
                 {s}
               </option>
@@ -107,46 +187,110 @@ orders.get('/', async (c) => {
         </button>
       </form>
 
-      <div class="admin-table-wrap">
-        <table class="admin-table">
-          <thead>
-            <tr>
-              <th>Order</th>
-              <th class="col-optional">Date</th>
-              <th>Customer</th>
-              <th>Status</th>
-              <th class="num">Total</th>
-              <th class="col-optional">Coupon</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(listRes.results ?? []).map((o) => (
+      {view === 'baskets' ? (
+        <form method="post" action="/admin/orders/export-baskets">
+          <input type="hidden" name="_csrf" value={admin.csrf} />
+          <div class="bulk-bar">
+            <label class="checkbox-row" style="margin:0;">
+              <input type="checkbox" id="select-all-baskets" /> Select all on this page
+            </label>
+            <button class="btn btn-secondary btn-sm" type="submit">
+              Export selected (CSV)
+            </button>
+          </div>
+          <div class="admin-table-wrap">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Basket</th>
+                  <th class="col-optional">Date</th>
+                  <th>Contact</th>
+                  <th>Status</th>
+                  <th class="num">Total</th>
+                  <th>Resume link</th>
+                </tr>
+              </thead>
+              <tbody>
+                {results.map((o) => (
+                  <tr>
+                    <td>
+                      <input type="checkbox" name="ids" value={o.id} class="basket-select" />
+                    </td>
+                    <td>
+                      <a href={`/admin/orders/${o.id}`}>{o.order_number}</a>
+                    </td>
+                    <td class="faint nowrap col-optional">{o.created_at}</td>
+                    <td>
+                      {o.customer_name ?? <span class="faint">Unknown</span>}
+                      <div class="faint">{o.email ?? '—'}</div>
+                    </td>
+                    <td>{statusPill(o.status)}</td>
+                    <td class="num">{formatPence(o.total_pence)}</td>
+                    <td class="faint">
+                      {o.recovery_url ? (
+                        <a href={o.recovery_url} target="_blank" rel="noreferrer">
+                          Resume link
+                        </a>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {!results.length ? (
+                  <tr>
+                    <td colSpan={7} class="center muted" style="padding:32px;">
+                      No open baskets match these filters.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </form>
+      ) : (
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
               <tr>
-                <td>
-                  <a href={`/admin/orders/${o.id}`}>{o.order_number}</a>
-                </td>
-                <td class="faint nowrap col-optional">{o.created_at}</td>
-                <td>
-                  {o.customer_name ?? '—'}
-                  <div class="faint">{o.email ?? ''}</div>
-                  {/* Shown here only on phones, where the Date column is hidden. */}
-                  <div class="faint small show-when-narrow">{o.created_at?.slice(0, 10)}</div>
-                </td>
-                <td>{statusPill(o.status)}</td>
-                <td class="num">{formatPence(o.total_pence)}</td>
-                <td class="faint col-optional">{o.coupon_code ?? '—'}</td>
+                <th>Order</th>
+                <th class="col-optional">Date</th>
+                <th>Customer</th>
+                <th>Status</th>
+                <th class="num">Total</th>
+                <th class="col-optional">Coupon</th>
               </tr>
-            ))}
-            {!(listRes.results ?? []).length ? (
-              <tr>
-                <td colSpan={6} class="center muted" style="padding:32px;">
-                  No orders match these filters.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {results.map((o) => (
+                <tr>
+                  <td>
+                    <a href={`/admin/orders/${o.id}`}>{o.order_number}</a>
+                  </td>
+                  <td class="faint nowrap col-optional">{o.created_at}</td>
+                  <td>
+                    {o.customer_name ?? '—'}
+                    <div class="faint">{o.email ?? ''}</div>
+                    {/* Shown here only on phones, where the Date column is hidden. */}
+                    <div class="faint small show-when-narrow">{o.created_at?.slice(0, 10)}</div>
+                  </td>
+                  <td>{statusPill(o.status)}</td>
+                  <td class="num">{formatPence(o.total_pence)}</td>
+                  <td class="faint col-optional">{o.coupon_code ?? '—'}</td>
+                </tr>
+              ))}
+              {!results.length ? (
+                <tr>
+                  <td colSpan={6} class="center muted" style="padding:32px;">
+                    No orders match these filters.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <nav class="pagination" aria-label="Pagination">
         {page > 1 ? <a href={`/admin/orders?${qs({ page: page - 1 })}`}>← Prev</a> : null}
@@ -155,8 +299,73 @@ orders.get('/', async (c) => {
         </span>
         {page < totalPages ? <a href={`/admin/orders?${qs({ page: page + 1 })}`}>Next →</a> : null}
       </nav>
+
+      {view === 'baskets' ? (
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `document.getElementById('select-all-baskets')?.addEventListener('change', function (e) {
+              document.querySelectorAll('.basket-select').forEach(function (cb) { cb.checked = e.target.checked; });
+            });`,
+          }}
+        />
+      ) : null}
     </AdminLayout>,
   );
+});
+
+orders.post('/export-baskets', async (c) => {
+  const body = await c.req.parseBody();
+  if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
+    return c.redirect('/admin/orders?view=baskets&err=' + encodeURIComponent('Your session expired — please try again.'), 303);
+  }
+  const rawIds = body['ids'];
+  const ids = (Array.isArray(rawIds) ? rawIds : rawIds ? [rawIds] : [])
+    .map((v) => Number(v))
+    .filter((n) => Number.isFinite(n));
+
+  if (!ids.length) {
+    return c.redirect('/admin/orders?view=baskets&err=' + encodeURIComponent('Select at least one basket to export.'), 303);
+  }
+
+  const placeholders = ids.map(() => '?').join(',');
+  const { results } = await c.env.DB.prepare(
+    `SELECT order_number, email, customer_name, phone, total_pence, status, created_at, recovery_url
+       FROM orders WHERE id IN (${placeholders}) ORDER BY created_at DESC`,
+  )
+    .bind(...ids)
+    .all<{
+      order_number: string;
+      email: string | null;
+      customer_name: string | null;
+      phone: string | null;
+      total_pence: number;
+      status: string;
+      created_at: string;
+      recovery_url: string | null;
+    }>();
+
+  const csvEscape = (v: string) => `"${v.replace(/"/g, '""')}"`;
+  const rows = [
+    ['Order', 'Email', 'Name', 'Phone', 'Total', 'Status', 'Date', 'Resume link'],
+    ...(results ?? []).map((r) => [
+      r.order_number,
+      r.email ?? '',
+      r.customer_name ?? '',
+      r.phone ?? '',
+      formatPence(r.total_pence),
+      r.status,
+      r.created_at,
+      r.recovery_url ?? '',
+    ]),
+  ];
+  const csv = rows.map((row) => row.map((cell) => csvEscape(String(cell))).join(',')).join('\r\n');
+
+  return new Response(csv, {
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="open-baskets-${new Date().toISOString().slice(0, 10)}.csv"`,
+    },
+  });
 });
 
 async function loadOrder(
@@ -194,6 +403,11 @@ orders.get('/:id', async (c) => {
             ← Back to orders
           </a>
         </div>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Order flow</h3>
+        <OrderFlow order={order} />
       </div>
 
       <div class="admin-grid cols-2">

@@ -145,6 +145,7 @@ export interface Order {
   parcel2go_payment_url: string | null;
   parcel2go_status: string | null;
   parcel2go_error: string | null;
+  recovery_url: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -95,6 +95,28 @@ body.admin-page {
 .admin-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
 .admin-head h1 { margin-bottom: .2em; }
 .admin-head .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.admin-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+.admin-tabs a {
+  padding: 8px 14px; border-radius: 8px 8px 0 0; color: var(--ink-soft); font-weight: 500;
+  border: 1px solid transparent; border-bottom: none; margin-bottom: -1px;
+}
+.admin-tabs a:hover { color: var(--ink); text-decoration: none; }
+.admin-tabs a.active { color: var(--ink); background: var(--surface); border-color: var(--line); }
+.bulk-bar {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 10px;
+  background: var(--surface-2); border-radius: 8px; flex-wrap: wrap;
+}
+.order-flow { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
+.order-flow li { display: flex; align-items: flex-start; gap: 10px; padding: 6px 0; }
+.order-flow .flow-icon {
+  width: 22px; height: 22px; border-radius: 999px; flex: none; display: grid; place-items: center;
+  font-size: .8rem; font-weight: 700; margin-top: 1px;
+}
+.order-flow .flow-done .flow-icon { background: var(--ok-soft); color: var(--ok); }
+.order-flow .flow-pending .flow-icon { background: var(--surface-2); color: var(--ink-faint); border: 1px solid var(--line); }
+.order-flow .flow-error .flow-icon { background: var(--bad-soft); color: var(--bad); }
+.order-flow .flow-label { font-weight: 600; font-size: .92rem; }
+.order-flow .flow-detail { font-size: .82rem; color: var(--ink-faint); }
 
 /* ---------- flash messages: impossible to miss, dismissible with no JS ---------- */
 .flash-toggle { display: none; }
