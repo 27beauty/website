@@ -97,15 +97,39 @@ function parseShipping(json: string | null): ShippingAddress | null {
 
 const PAID_STATUSES = ['paid', 'fulfilled', 'refunded'] as const;
 const BASKET_STATUSES = ['pending', 'cancelled'] as const;
+const SHIPPING_STATUSES = ['paid'] as const;
+
+/** Push/Ship control shown per-row in the Orders and Shipping tabs. */
+function ShipCell({ order, csrf, redirect }: { order: Order; csrf: string; redirect: string }) {
+  if (order.status !== 'paid') return <span class="faint">—</span>;
+  if (order.parcel2go_status === 'pushed' && order.parcel2go_payment_url) {
+    return (
+      <a class="btn btn-sm btn-secondary" href={order.parcel2go_payment_url} target="_blank" rel="noreferrer">
+        Ship →
+      </a>
+    );
+  }
+  return (
+    <form method="post" action={`/admin/orders/${order.id}/parcel2go`}>
+      <input type="hidden" name="_csrf" value={csrf} />
+      <input type="hidden" name="redirect" value={redirect} />
+      <button class="btn btn-sm btn-accent" type="submit" title={order.parcel2go_error ?? undefined}>
+        {order.parcel2go_status === 'error' ? 'Retry push' : 'Push to ship'}
+      </button>
+    </form>
+  );
+}
 
 orders.get('/', async (c) => {
   const admin = getAdmin(c);
   const query = c.req.query();
   const page = clampInt(query.page, 1, 100000, 1);
-  const view = query.view === 'baskets' ? 'baskets' : 'orders';
-  const allowedStatuses: readonly string[] = view === 'baskets' ? BASKET_STATUSES : PAID_STATUSES;
+  const view = query.view === 'baskets' ? 'baskets' : query.view === 'shipping' ? 'shipping' : 'orders';
+  const allowedStatuses: readonly string[] =
+    view === 'baskets' ? BASKET_STATUSES : view === 'shipping' ? SHIPPING_STATUSES : PAID_STATUSES;
   const status = query.status && allowedStatuses.includes(query.status) ? query.status : undefined;
   const search = query.q?.trim();
+  const backHref = `/admin/orders?${new URLSearchParams(query as Record<string, string>).toString()}`;
 
   const where: string[] = [`status IN (${allowedStatuses.map(() => '?').join(',')})`];
   const params: unknown[] = [...allowedStatuses];
@@ -142,9 +166,9 @@ orders.get('/', async (c) => {
   return c.html(
     <AdminLayout title="Orders" active="orders" admin={admin} msg={flash.msg} err={flash.err}>
       <div class="admin-head">
-        <h1>{view === 'baskets' ? 'Open baskets' : 'Orders'}</h1>
+        <h1>{view === 'baskets' ? 'Open baskets' : view === 'shipping' ? 'Shipping' : 'Orders'}</h1>
         <p class="muted">
-          {total} {view === 'baskets' ? 'basket' : 'order'}
+          {total} {view === 'baskets' ? 'basket' : view === 'shipping' ? 'order awaiting shipping' : 'order'}
           {total === 1 ? '' : 's'}.
         </p>
       </div>
@@ -152,6 +176,9 @@ orders.get('/', async (c) => {
       <nav class="admin-tabs" aria-label="Order views">
         <a href="/admin/orders" class={view === 'orders' ? 'active' : ''}>
           Orders
+        </a>
+        <a href="/admin/orders?view=shipping" class={view === 'shipping' ? 'active' : ''}>
+          Shipping
         </a>
         <a href="/admin/orders?view=baskets" class={view === 'baskets' ? 'active' : ''}>
           Open baskets
@@ -164,6 +191,12 @@ orders.get('/', async (c) => {
           Stripe. Most won't have an email unless the shopper got as far as typing one in before leaving.
         </p>
       ) : null}
+      {view === 'shipping' ? (
+        <p class="muted" style="margin-top:-8px;margin-bottom:16px;">
+          Paid orders not yet fulfilled. "Push to ship" sends the order to Parcel2Go — click "Ship →"
+          to open the booking and pay for the label. An order drops off this list once marked fulfilled.
+        </p>
+      ) : null}
 
       <form method="get" action="/admin/orders" class="filter-bar">
         <input type="hidden" name="view" value={view} />
@@ -171,23 +204,69 @@ orders.get('/', async (c) => {
           <label for="q">Search</label>
           <input id="q" type="search" name="q" value={query.q ?? ''} placeholder="Order number or email…" />
         </div>
-        <div class="field">
-          <label for="status">Status</label>
-          <select id="status" name="status">
-            <option value="">All</option>
-            {allowedStatuses.map((s) => (
-              <option value={s} selected={status === s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </div>
+        {view !== 'shipping' ? (
+          <div class="field">
+            <label for="status">Status</label>
+            <select id="status" name="status">
+              <option value="">All</option>
+              {allowedStatuses.map((s) => (
+                <option value={s} selected={status === s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
         <button class="btn btn-secondary" type="submit">
           Filter
         </button>
       </form>
 
-      {view === 'baskets' ? (
+      {view === 'shipping' ? (
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Order</th>
+                <th class="col-optional">Date</th>
+                <th>Customer</th>
+                <th class="num">Total</th>
+                <th>Ship</th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.map((o) => (
+                <tr>
+                  <td>
+                    <a href={`/admin/orders/${o.id}`}>{o.order_number}</a>
+                  </td>
+                  <td class="faint nowrap col-optional">{o.created_at}</td>
+                  <td>
+                    {o.customer_name ?? '—'}
+                    <div class="faint">{o.email ?? ''}</div>
+                  </td>
+                  <td class="num">{formatPence(o.total_pence)}</td>
+                  <td>
+                    <ShipCell order={o} csrf={admin.csrf} redirect={backHref} />
+                    {o.parcel2go_status === 'error' ? (
+                      <div class="faint small" style="max-width:220px;">
+                        {o.parcel2go_error}
+                      </div>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+              {!results.length ? (
+                <tr>
+                  <td colSpan={5} class="center muted" style="padding:32px;">
+                    Nothing waiting to ship — every paid order is fulfilled.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      ) : view === 'baskets' ? (
         <form method="post" action="/admin/orders/export-baskets">
           <input type="hidden" name="_csrf" value={admin.csrf} />
           <div class="bulk-bar">
@@ -260,6 +339,7 @@ orders.get('/', async (c) => {
                 <th>Status</th>
                 <th class="num">Total</th>
                 <th class="col-optional">Coupon</th>
+                <th>Ship</th>
               </tr>
             </thead>
             <tbody>
@@ -278,11 +358,14 @@ orders.get('/', async (c) => {
                   <td>{statusPill(o.status)}</td>
                   <td class="num">{formatPence(o.total_pence)}</td>
                   <td class="faint col-optional">{o.coupon_code ?? '—'}</td>
+                  <td>
+                    <ShipCell order={o} csrf={admin.csrf} redirect={backHref} />
+                  </td>
                 </tr>
               ))}
               {!results.length ? (
                 <tr>
-                  <td colSpan={6} class="center muted" style="padding:32px;">
+                  <td colSpan={7} class="center muted" style="padding:32px;">
                     No orders match these filters.
                   </td>
                 </tr>
@@ -583,12 +666,19 @@ orders.get('/:id', async (c) => {
   );
 });
 
+/** Only ever sends the admin back into /admin/orders — never an open redirect. */
+function safeOrdersRedirect(raw: unknown, fallback: string): string {
+  return typeof raw === 'string' && raw.startsWith('/admin/orders') ? raw : fallback;
+}
+
 orders.post('/:id/parcel2go', async (c) => {
   const id = Number(c.req.param('id'));
   const body = await c.req.parseBody();
   if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
     return c.redirect(`/admin/orders/${id}?err=` + encodeURIComponent('Your session expired — please try again.'), 303);
   }
+  const back = safeOrdersRedirect(body.redirect, `/admin/orders/${id}`);
+  const sep = back.includes('?') ? '&' : '?';
   const order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first<Order>();
   if (!order) return c.redirect('/admin/orders', 303);
 
@@ -601,13 +691,13 @@ orders.post('/:id/parcel2go', async (c) => {
     )
       .bind(result.orderId, result.paymentUrl, id)
       .run();
-    return c.redirect(`/admin/orders/${id}?msg=` + encodeURIComponent('Pushed to Parcel2Go.'), 303);
+    return c.redirect(`${back}${sep}msg=` + encodeURIComponent('Pushed to Parcel2Go.'), 303);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await c.env.DB.prepare(`UPDATE orders SET parcel2go_status = 'error', parcel2go_error = ? WHERE id = ?`)
       .bind(message.slice(0, 1000), id)
       .run();
-    return c.redirect(`/admin/orders/${id}?err=` + encodeURIComponent(`Parcel2Go: ${message}`), 303);
+    return c.redirect(`${back}${sep}err=` + encodeURIComponent(`Parcel2Go: ${message}`), 303);
   }
 });
 

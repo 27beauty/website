@@ -97,7 +97,7 @@ admin.get('/', async (c) => {
           <div class="stat-label">Awaiting fulfilment</div>
           <div class="stat-value">{awaiting}</div>
           <div class="stat-sub">
-            <a href="/admin/orders?status=paid">View orders →</a>
+            <a href="/admin/orders?view=shipping">View orders →</a>
           </div>
         </div>
         <div class="stat-tile">
@@ -118,7 +118,7 @@ admin.get('/', async (c) => {
         <a class="btn btn-secondary" href="/admin/products/new">
           + New product
         </a>
-        <a class="btn btn-secondary" href="/admin/orders?status=paid">
+        <a class="btn btn-secondary" href="/admin/orders?view=shipping">
           Orders to fulfil
         </a>
         <a class="btn btn-secondary" href="/admin/coupons/new">
@@ -186,7 +186,7 @@ admin.get('/', async (c) => {
           </p>
           {p2g.errored > 0 ? (
             <p class="faint">
-              <a href="/admin/orders">Check failed pushes →</a>
+              <a href="/admin/orders?view=shipping">Check failed pushes →</a>
             </p>
           ) : null}
           <p class="field-hint" style="margin-top:10px;">

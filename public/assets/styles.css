@@ -263,16 +263,29 @@ textarea { min-height: 120px; resize: vertical; }
 .pill-bad { background: var(--bad-soft); color: var(--bad); }
 
 /* ---------- hero + category tiles ---------- */
+/* Full-bleed: escapes the .wrap container it sits in without restructuring
+   Layout's markup, so the band reaches the viewport edges like the topbar
+   above it instead of sitting in its own rounded, bordered-looking box. */
 .hero {
   background: linear-gradient(135deg, var(--brand-ink) 0%, var(--brand) 55%, #94406f 100%);
-  color: #fff; border-radius: var(--radius-lg);
-  padding: clamp(26px, 6vw, 44px) clamp(20px, 5vw, 36px);
-  margin-bottom: var(--space-6);
+  color: #fff;
+  padding-block: clamp(40px, 8vw, 72px);
+  margin-bottom: var(--space-7);
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
 }
-.hero h1 { color: #fff; margin-bottom: .3em; }
-.hero p { color: #f3e3ec; max-width: 54ch; margin-inline: auto; }
-.hero.center p { margin-left: auto; margin-right: auto; }
-.hero .btn-accent { margin-top: var(--space-2); }
+.hero-inner { width: 100%; max-width: var(--wrap); margin-inline: auto; padding-inline: var(--space-4); }
+.hero h1 { color: #fff; margin-bottom: .4em; }
+.hero:not(.center) h1 { max-width: 18ch; }
+.hero p { color: #f3e3ec; max-width: 54ch; margin-bottom: var(--space-4); }
+.hero .btn-accent { margin-top: var(--space-1); }
+.hero.center { text-align: center; }
+.hero.center p { margin-inline: auto; }
+
+/* Consistent vertical rhythm between homepage sections, replacing one-off
+   inline margins. */
+.home-section { margin-bottom: var(--space-7); }
 
 .cat-grid { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 .cat-tile {

@@ -142,18 +142,19 @@ storefront.get('/', async (c) => {
       activeCategory="all"
     >
       <section class="hero">
-        <h1>Beauty brands you know. Prices you'll love.</h1>
-        <p>
-          Genuine skincare, haircare and grooming brands, dispatched from the UK at everyday prices —
-          plus the household names we're already known for on the marketplaces. Bought from us
-          before? Your QR card is worth 10% off right here.
-        </p>
-        <a class="btn btn-accent" href={`/category/${BEAUTY_CATEGORY_SLUG}`}>
-          Shop beauty &amp; grooming
-        </a>
+        <div class="hero-inner">
+          <h1>Genuine beauty brands. Honest prices.</h1>
+          <p>
+            Real skincare, haircare and grooming brands, dispatched fast from the UK — the same
+            products you'd find on the marketplaces, without the markup.
+          </p>
+          <a class="btn btn-accent" href={`/category/${BEAUTY_CATEGORY_SLUG}`}>
+            Shop beauty &amp; grooming
+          </a>
+        </div>
       </section>
 
-      <section class="stack" style="margin-bottom:32px">
+      <section class="stack home-section">
         <div class="row-between">
           <h2 style="margin-bottom:0">💄 Beauty &amp; grooming favourites</h2>
           <a href={`/category/${BEAUTY_CATEGORY_SLUG}`}>Shop all beauty</a>
@@ -169,7 +170,7 @@ storefront.get('/', async (c) => {
         )}
       </section>
 
-      <section class="panel" style="margin-bottom:32px">
+      <section class="panel home-section">
         <h2>📇 Scanned a QR card?</h2>
         <p class="muted">
           Every 27beauty parcel includes a QR card. Scan it, or enter the code printed on it at checkout,
@@ -180,7 +181,7 @@ storefront.get('/', async (c) => {
         </a>
       </section>
 
-      <section class="stack" style="margin-bottom:32px">
+      <section class="stack home-section">
         <div class="row-between">
           <h2 style="margin-bottom:0">Popular right now</h2>
           <a href="/shop">See all products</a>
@@ -197,7 +198,7 @@ storefront.get('/', async (c) => {
       </section>
 
       {otherCategoryTiles.length ? (
-        <section class="stack" style="margin-bottom:32px">
+        <section class="stack home-section">
           <h2>Everything else, all in one place</h2>
           <div class="cat-grid">
             {otherCategoryTiles.map((cat) => (
@@ -855,24 +856,26 @@ async function qrLanding(c: Context<AppBindings>, codeRaw: string) {
       noindex
     >
       <section class="hero center">
-        <h1>{heading}</h1>
-        {coupon ? (
-          <p class="qr-code-display">{coupon.code}</p>
-        ) : null}
-        <p>
-          {coupon
-            ? "Thanks for shopping with 27beauty. Your discount is saved to this basket — carry on browsing and it comes straight off your total at checkout, no need to remember a thing."
-            : 'Thanks for scanning. Browse the shop below — the same products you found on the marketplace, direct from us.'}
-        </p>
-        {coupon && coupon.min_spend_pence > 0 ? (
-          <p class="small">Spend {formatPence(coupon.min_spend_pence)} or more to use it.</p>
-        ) : null}
-        {coupon?.expires_at ? (
-          <p class="small">Valid until {coupon.expires_at.slice(0, 10)}.</p>
-        ) : null}
-        <a class="btn btn-accent" href={scopedProduct ? `/product/${scopedProduct.slug}` : '/shop'}>
-          {scopedProduct ? 'See the offer' : 'Start shopping'}
-        </a>
+        <div class="hero-inner">
+          <h1>{heading}</h1>
+          {coupon ? (
+            <p class="qr-code-display">{coupon.code}</p>
+          ) : null}
+          <p>
+            {coupon
+              ? "Thanks for shopping with 27beauty. Your discount is saved to this basket — carry on browsing and it comes straight off your total at checkout, no need to remember a thing."
+              : 'Thanks for scanning. Browse the shop below — the same products you found on the marketplace, direct from us.'}
+          </p>
+          {coupon && coupon.min_spend_pence > 0 ? (
+            <p class="small">Spend {formatPence(coupon.min_spend_pence)} or more to use it.</p>
+          ) : null}
+          {coupon?.expires_at ? (
+            <p class="small">Valid until {coupon.expires_at.slice(0, 10)}.</p>
+          ) : null}
+          <a class="btn btn-accent" href={scopedProduct ? `/product/${scopedProduct.slug}` : '/shop'}>
+            {scopedProduct ? 'See the offer' : 'Start shopping'}
+          </a>
+        </div>
       </section>
 
       {notice ? <Notice kind={notice.kind}>{notice.message}</Notice> : null}
