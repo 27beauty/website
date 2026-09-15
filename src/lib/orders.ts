@@ -9,7 +9,8 @@ import { generateOrderNumber } from './util';
 
 export interface CreatePendingOrderInput {
   cart: CartTotals;
-  email: string;
+  /** Null until Stripe Checkout collects it — we no longer ask for it ourselves before redirecting. */
+  email: string | null;
   name: string | null;
 }
 

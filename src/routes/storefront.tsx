@@ -695,7 +695,10 @@ async function renderCartPage(c: Context<AppBindings>, notice?: { message: strin
   );
 }
 
-storefront.get('/cart', async (c) => renderCartPage(c));
+storefront.get('/cart', async (c) => {
+  const err = c.req.query('err');
+  return renderCartPage(c, err ? { message: err, kind: 'bad' } : undefined);
+});
 
 storefront.post('/cart/add', async (c) => {
   const body = await c.req.parseBody();

@@ -109,7 +109,8 @@ export interface CreateCheckoutSessionInput {
   orderId: number;
   orderNumber: string;
   couponCode: string | null;
-  email: string;
+  /** Null lets Stripe's own hosted page collect it — we no longer ask for it first. */
+  email: string | null;
   cart: CartTotals;
 }
 
@@ -128,7 +129,7 @@ export async function createCheckoutSession(
   return stripe.checkout.sessions.create({
     mode: 'payment',
     line_items: toLineItems(env, input.cart.items),
-    customer_email: input.email,
+    customer_email: input.email ?? undefined,
     client_reference_id: String(input.orderId),
     metadata: {
       order_id: String(input.orderId),
