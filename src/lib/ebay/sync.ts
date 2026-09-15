@@ -252,27 +252,33 @@ async function syncAccount(
   }
 
   // Browse mode's search is a keyword approximation, not a full inventory
-  // listing (see browse.ts) — a product missing from one run's results is
-  // routine, not evidence it was delisted. Only archive after it's been
-  // absent for MISS_THRESHOLD consecutive runs (~24h at the current 10-min
-  // cron), which is long enough that occasional incomplete search coverage
-  // can't false-positive an in-stock product off the storefront.
+  // listing (see browse.ts) — it samples the same fixed set of query terms
+  // every run, so some real listings are *never* found by any run, not just
+  // occasionally missed. A miss-count grace period only delays a false
+  // archive, it can't prevent one, as seen in production: ~30 genuinely
+  // in-stock products got auto-archived exactly MISS_THRESHOLD runs after
+  // this was first "fixed" with a grace period alone. So: never auto-archive
+  // for browse-mode accounts at all — only sell mode's fetch is a complete,
+  // authoritative listing where "not present" reliably means "delisted".
+  // Browse-mode delisting has to be manual (or wait for sell mode).
   let ended = 0;
-  for (const row of diff.toEnd) {
-    const missCount = row.ebay_miss_count + 1;
-    if (missCount >= MISS_THRESHOLD) {
-      ended++;
-      statements.push(
-        env.DB.prepare(
-          `UPDATE products
-           SET stock = 0, status = 'archived', ebay_miss_count = ?, ebay_synced_at = datetime('now'), updated_at = datetime('now')
-           WHERE id = ?`,
-        ).bind(missCount, row.id),
-      );
-    } else {
-      statements.push(
-        env.DB.prepare(`UPDATE products SET ebay_miss_count = ? WHERE id = ?`).bind(missCount, row.id),
-      );
+  if (account.mode === 'sell') {
+    for (const row of diff.toEnd) {
+      const missCount = row.ebay_miss_count + 1;
+      if (missCount >= MISS_THRESHOLD) {
+        ended++;
+        statements.push(
+          env.DB.prepare(
+            `UPDATE products
+             SET stock = 0, status = 'archived', ebay_miss_count = ?, ebay_synced_at = datetime('now'), updated_at = datetime('now')
+             WHERE id = ?`,
+          ).bind(missCount, row.id),
+        );
+      } else {
+        statements.push(
+          env.DB.prepare(`UPDATE products SET ebay_miss_count = ? WHERE id = ?`).bind(missCount, row.id),
+        );
+      }
     }
   }
 
