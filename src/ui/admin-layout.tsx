@@ -7,7 +7,7 @@ import type { FC, PropsWithChildren } from 'hono/jsx';
  * updates stock standing in a stockroom, packs orders at a kitchen table.
  */
 
-export type AdminSection = 'dashboard' | 'products' | 'orders' | 'coupons' | 'settings';
+export type AdminSection = 'dashboard' | 'products' | 'orders' | 'coupons' | 'b2b' | 'settings';
 
 export interface AdminLayoutProps {
   title: string;
@@ -25,6 +25,7 @@ const NAV_ICONS: Record<AdminSection, string> = {
   products: 'M13 4h5a2 2 0 0 1 2 2v5L11.5 19.5 4 12 13 4Z M15.5 8.5h.01',
   orders: 'M3 8l9-4 9 4-9 4-9-4Z M3 8v8l9 4 9-4V8 M12 12v8',
   coupons: 'M4 9a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1.4a1.7 1.7 0 0 0 0 3.2V16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1.4a1.7 1.7 0 0 0 0-3.2V9Z',
+  b2b: 'M4 21V9.5L12 4l8 5.5V21M9 21v-6h6v6M4 9.5h16',
   settings:
     'M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z M19.4 12a7.4 7.4 0 0 1-.1 1.3l1.9 1.5-1.9 3.3-2.2-.9a7.6 7.6 0 0 1-2.3 1.3L14.5 21h-5l-.3-2.5a7.6 7.6 0 0 1-2.3-1.3l-2.2.9-1.9-3.3 1.9-1.5A7.4 7.4 0 0 1 4.6 12c0-.4 0-.9.1-1.3l-1.9-1.5 1.9-3.3 2.2.9a7.6 7.6 0 0 1 2.3-1.3L9.5 3h5l.3 2.5a7.6 7.6 0 0 1 2.3 1.3l2.2-.9 1.9 3.3-1.9 1.5c.1.4.1.9.1 1.3Z',
 };
@@ -42,6 +43,7 @@ const NAV: Array<{ id: AdminSection; label: string; href: string }> = [
   { id: 'products', label: 'Products', href: '/admin/products' },
   { id: 'orders', label: 'Orders', href: '/admin/orders' },
   { id: 'coupons', label: 'Coupons', href: '/admin/coupons' },
+  { id: 'b2b', label: 'Trade', href: '/admin/b2b' },
   { id: 'settings', label: 'Settings', href: '/admin/settings' },
 ];
 

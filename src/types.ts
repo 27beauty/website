@@ -162,6 +162,17 @@ export interface OrderItem {
   line_total_pence: number;
 }
 
+export interface B2bInquiry {
+  id: number;
+  business_name: string;
+  contact_name: string;
+  email: string;
+  phone: string | null;
+  message: string | null;
+  status: 'new' | 'read' | 'archived';
+  created_at: string;
+}
+
 export interface EbayAccount {
   id: number;
   label: string;

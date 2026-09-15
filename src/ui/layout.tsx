@@ -133,6 +133,9 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = (props) => {
                     <a href="/pages/contact">Contact us</a>
                   </li>
                   <li>
+                    <a href="/b2b">Trade &amp; wholesale</a>
+                  </li>
+                  <li>
                     <a href="/pages/terms">Terms</a>
                   </li>
                   <li>

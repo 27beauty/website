@@ -23,7 +23,8 @@ import {
 import { validateCoupon } from '../lib/coupons';
 import { getShippingConfig } from '../lib/settings';
 import { formatPence } from '../lib/money';
-import { clampInt, excerpt, normaliseCouponCode, parseJsonArray } from '../lib/util';
+import { clampInt, excerpt, isEmail, normaliseCouponCode, parseJsonArray } from '../lib/util';
+import { createB2bInquiry } from '../lib/b2b';
 import { Layout } from '../ui/layout';
 import {
   Breadcrumbs,
@@ -1059,6 +1060,11 @@ storefront.get('/pages/:slug', async (c) => {
           </p>
           <h2>Business address</h2>
           <p>27beauty, United Kingdom. A full postal address is available on request by email.</p>
+          <h2>Buying for a business?</h2>
+          <p>
+            See our <a href="/b2b">trade &amp; wholesale</a> page for stocking your shop, salon or
+            pharmacy at trade prices.
+          </p>
         </>,
       );
 
@@ -1168,6 +1174,141 @@ storefront.get('/pages/:slug', async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// B2B / wholesale enquiries
+// ---------------------------------------------------------------------------
+
+interface B2bFormValues {
+  businessName: string;
+  contactName: string;
+  email: string;
+  phone: string;
+  message: string;
+}
+
+function renderB2bPage(
+  c: Context<AppBindings>,
+  categories: Awaited<ReturnType<typeof listCategories>>,
+  opts: { notice?: { message: string; kind?: 'ok' | 'bad' }; values?: B2bFormValues } = {},
+) {
+  const email = c.env.SUPPORT_EMAIL || '27beautyltd@gmail.com';
+  const values = opts.values ?? { businessName: '', contactName: '', email: '', phone: '', message: '' };
+
+  return c.html(
+    <Layout
+      title="Trade & wholesale — 27beauty"
+      description="Stocking a shop, salon or pharmacy? 27beauty supplies genuine branded stock to businesses at trade prices — get in touch for a quote."
+      categories={categories}
+      cartCount={c.get('cartCount')}
+      canonical={canonicalUrl(c.env, '/b2b')}
+    >
+      <div class="checkout-layout">
+        <div class="panel stack">
+          <h1>Trade &amp; wholesale</h1>
+          <p class="muted">
+            We supply genuine branded stock — beauty, grooming and everyday household goods — to shops,
+            salons, pharmacies and other businesses at trade prices, dispatched from the same UK stock as
+            our retail orders. Tell us what you're after and we'll come back with a quote.
+          </p>
+
+          {opts.notice ? <Notice kind={opts.notice.kind}>{opts.notice.message}</Notice> : null}
+
+          <form method="post" action="/b2b/inquiry" class="stack">
+            {/* Honeypot: hidden from real visitors via CSS, so anything that fills it in is a bot. */}
+            <div class="field" style="position:absolute;left:-9999px;" aria-hidden="true">
+              <label for="website">Leave this field blank</label>
+              <input id="website" name="website" type="text" tabindex={-1} autocomplete="off" />
+            </div>
+            <div class="admin-grid cols-2">
+              <div class="field">
+                <label for="b2b-business">Business name</label>
+                <input id="b2b-business" name="business_name" type="text" value={values.businessName} />
+              </div>
+              <div class="field">
+                <label for="b2b-contact">Your name</label>
+                <input id="b2b-contact" name="contact_name" type="text" value={values.contactName} />
+              </div>
+              <div class="field">
+                <label for="b2b-email">Email address</label>
+                <input id="b2b-email" name="email" type="email" autocomplete="email" value={values.email} />
+              </div>
+              <div class="field">
+                <label for="b2b-phone">Phone (optional)</label>
+                <input id="b2b-phone" name="phone" type="tel" autocomplete="tel" value={values.phone} />
+              </div>
+            </div>
+            <div class="field">
+              <label for="b2b-message">What are you looking for?</label>
+              <textarea id="b2b-message" name="message" rows={5}>
+                {values.message}
+              </textarea>
+              <p class="field-hint">Products, quantities, how often you'd order — whatever's useful.</p>
+            </div>
+            <button class="btn btn-accent" type="submit">
+              Send enquiry
+            </button>
+          </form>
+        </div>
+
+        <div class="panel summary">
+          <h2>Prefer email?</h2>
+          <p class="muted">
+            Skip the form and email us directly at <a href={`mailto:${email}`}>{email}</a> — include your
+            business name and roughly what you're looking to stock, and we'll get back to you.
+          </p>
+        </div>
+      </div>
+    </Layout>,
+  );
+}
+
+storefront.get('/b2b', async (c) => {
+  const categories = await listCategories(c.env);
+  return renderB2bPage(c, categories);
+});
+
+storefront.post('/b2b/inquiry', async (c) => {
+  const body = await c.req.parseBody();
+  const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  const values: B2bFormValues = {
+    businessName: str(body.business_name),
+    contactName: str(body.contact_name),
+    email: str(body.email),
+    phone: str(body.phone),
+    message: str(body.message),
+  };
+  const categories = await listCategories(c.env);
+
+  // Honeypot: a real visitor never sees or fills this field in.
+  if (str(body.website)) {
+    return renderB2bPage(c, categories, {
+      notice: { message: "Thanks — we've received your enquiry and will be in touch shortly.", kind: 'ok' },
+    });
+  }
+
+  if (!values.businessName || !values.contactName || !isEmail(values.email)) {
+    return renderB2bPage(c, categories, {
+      notice: { message: 'Please fill in your business name, your name and a valid email address.', kind: 'bad' },
+      values,
+    });
+  }
+
+  await createB2bInquiry(c.env, {
+    businessName: values.businessName,
+    contactName: values.contactName,
+    email: values.email,
+    phone: values.phone || null,
+    message: values.message || null,
+  });
+
+  return renderB2bPage(c, categories, {
+    notice: {
+      message: "Thanks — we've received your enquiry and will be in touch shortly.",
+      kind: 'ok',
+    },
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Sitemap
 // ---------------------------------------------------------------------------
 
@@ -1178,6 +1319,7 @@ storefront.get('/sitemap.xml', async (c) => {
   const urls: Array<{ loc: string; lastmod?: string }> = [
     { loc: `${base}/` },
     { loc: `${base}/shop` },
+    { loc: `${base}/b2b` },
     ...categories.map((cat) => ({ loc: `${base}/category/${cat.slug}` })),
     ...products.map((p) => ({ loc: `${base}/product/${p.slug}`, lastmod: p.updated_at?.slice(0, 10) })),
   ];
