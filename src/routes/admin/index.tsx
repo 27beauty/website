@@ -10,6 +10,7 @@ import { settings } from './settings';
 import { getAdmin, requireAdmin } from '../../lib/admin-auth';
 import { AdminLayout } from '../../ui/admin-layout';
 import { formatPence } from '../../lib/money';
+import { getSetting } from '../../lib/settings';
 
 /** Admin panel: auth, dashboard, products, orders, coupons, settings, sync. */
 export const admin = new Hono<AppBindings>();
@@ -39,7 +40,7 @@ admin.get('/', async (c) => {
   const session = getAdmin(c);
   const flash = { msg: c.req.query('msg') ?? null, err: c.req.query('err') ?? null };
 
-  const [orderStats, awaitingRow, productStats, lastSync, lowStockRows] = await Promise.all([
+  const [orderStats, awaitingRow, productStats, lastSync, lowStockRows, p2gStats, p2gEnabled] = await Promise.all([
     c.env.DB.prepare(
       `SELECT
          COALESCE(SUM(CASE WHEN date(created_at) = date('now') THEN total_pence ELSE 0 END), 0) AS today_revenue,
@@ -60,11 +61,20 @@ admin.get('/', async (c) => {
     c.env.DB.prepare(
       `SELECT title, stock, id FROM products WHERE status = 'active' AND stock <= 3 ORDER BY stock ASC, title ASC LIMIT 8`,
     ).all<{ title: string; stock: number; id: number }>(),
+    c.env.DB.prepare(
+      `SELECT
+         COALESCE(SUM(CASE WHEN parcel2go_status = 'pushed' THEN 1 ELSE 0 END), 0) AS pushed,
+         COALESCE(SUM(CASE WHEN parcel2go_status = 'error' THEN 1 ELSE 0 END), 0) AS errored
+       FROM orders WHERE status IN ('paid', 'fulfilled', 'refunded')`,
+    ).first<{ pushed: number; errored: number }>(),
+    getSetting<boolean>(c.env, 'parcel2go.enabled', false),
   ]);
 
   const stats: OrderStats = orderStats ?? { today_revenue: 0, today_orders: 0, revenue_30d: 0, orders_30d: 0 };
   const pStats: ProductStats = productStats ?? { active_total: 0, out_of_stock: 0, low_stock: 0 };
   const awaiting = awaitingRow?.n ?? 0;
+  const p2g = p2gStats ?? { pushed: 0, errored: 0 };
+  const p2gConfigured = Boolean(c.env.PARCEL2GO_CLIENT_ID && c.env.PARCEL2GO_CLIENT_SECRET);
 
   return c.html(
     <AdminLayout title="Dashboard" active="dashboard" admin={session} msg={flash.msg} err={flash.err}>
@@ -122,7 +132,7 @@ admin.get('/', async (c) => {
         </a>
       </div>
 
-      <div class="admin-grid cols-2">
+      <div class="admin-grid cols-3">
         <div class="admin-panel">
           <h3>Low &amp; out of stock</h3>
           {(lowStockRows.results ?? []).length ? (
@@ -161,6 +171,30 @@ admin.get('/', async (c) => {
           )}
           <p style="margin-top:10px;">
             <a href="/admin/settings">Manage eBay accounts →</a>
+          </p>
+        </div>
+
+        <div class="admin-panel">
+          <h3>Parcel2Go</h3>
+          <p>
+            <span class={`pill ${!p2gEnabled ? 'pill-warn' : !p2gConfigured ? 'pill-bad' : 'pill-ok'}`}>
+              {!p2gEnabled ? 'disabled' : !p2gConfigured ? 'missing credentials' : 'active'}
+            </span>
+          </p>
+          <p class="muted">
+            {p2g.pushed} pushed · {p2g.errored} failed
+          </p>
+          {p2g.errored > 0 ? (
+            <p class="faint">
+              <a href="/admin/orders">Check failed pushes →</a>
+            </p>
+          ) : null}
+          <p class="field-hint" style="margin-top:10px;">
+            Pushed orders don't show up if you log into parcel2go.com — they're app-level bookings
+            only reachable via the link on each order's admin page.
+          </p>
+          <p style="margin-top:10px;">
+            <a href="/admin/settings">Manage Parcel2Go →</a>
           </p>
         </div>
       </div>
