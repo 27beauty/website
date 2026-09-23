@@ -711,6 +711,9 @@ async function renderCartPage(c: Context<AppBindings>, notice?: { message: strin
               <a class="btn btn-block" href="/checkout">
                 Continue to checkout
               </a>
+              <p class="muted small cart-b2b-link">
+                Buying for a shop or salon? <a href="/b2b">Trade &amp; wholesale enquiries</a>
+              </p>
             </div>
           </div>
         </div>
