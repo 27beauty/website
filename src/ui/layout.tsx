@@ -72,6 +72,9 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = (props) => {
               <button type="submit">Search</button>
             </form>
             <div class="header-actions">
+              <a class="header-link" href="/b2b">
+                Trade
+              </a>
               <a class="cart-link" href="/cart">
                 Basket
                 {cartCount > 0 ? <span class="cart-count">{cartCount}</span> : null}
