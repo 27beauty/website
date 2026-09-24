@@ -11,6 +11,7 @@ import { api } from './routes/api';
 import { admin } from './routes/admin/index';
 import { runEbaySync } from './lib/ebay/sync';
 import { pageViewMiddleware, pruneAnalytics } from './lib/analytics';
+import { runStockJob } from './lib/channels';
 
 const app = new Hono<AppBindings>();
 
@@ -136,11 +137,22 @@ app.onError((err, c) => {
   );
 });
 
+/** Must match the second cron in wrangler.toml. */
+const STOCK_CRON = '*/5 * * * *';
+
 export default {
   fetch: app.fetch,
 
-  /** Cron trigger (wrangler.toml) — keeps the catalogue in step with eBay. */
+  /** Cron triggers (wrangler.toml): the eBay catalogue sync, and the centralised stock job. */
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (event.cron === STOCK_CRON) {
+      ctx.waitUntil(
+        runStockJob(env, new Date(event.scheduledTime)).catch((err) => {
+          console.error('Stock job failed', err);
+        }),
+      );
+      return;
+    }
     ctx.waitUntil(
       runEbaySync(env, 'cron').catch((err) => {
         console.error('Scheduled eBay sync failed', err);

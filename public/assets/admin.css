@@ -486,10 +486,51 @@ input[inputmode="decimal"], input[type="number"] { font-variant-numeric: tabular
 .usage-fill-warn { background: var(--accent); }
 .usage-fill-bad { background: var(--bad); }
 
-/* Stock screen — the eBay figure is dimmed until it disagrees with ours, so a
-   drift between channels is the only thing that draws the eye. */
-.stock-mismatch { color: var(--bad); font-weight: 700; }
-.table-stock input[type="number"] { max-width: 92px; }
+/* Stock screen: one row per product, its listings as badges, the master count on the right. */
+.stock-list { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.stock-list > li { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); }
+.stock-list > li:last-child { border-bottom: 0; }
+.stock-main { flex: 1; min-width: 0; }
+.stock-title { font-weight: 600; display: block; }
+.stock-listings { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.stock-badge {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px;
+  font-size: .74rem; background: var(--surface-2); color: var(--ink-soft); border: 1px solid var(--line);
+}
+.stock-badge strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+.stock-badge-warn { background: var(--warn-soft); border-color: transparent; color: var(--warn); }
+.stock-badge-bad { background: var(--bad-soft); border-color: transparent; color: var(--bad); }
+.stock-edit { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.stock-edit input[type="number"] { width: 84px; text-align: right; font-variant-numeric: tabular-nums; }
+.stock-save { margin-top: 14px; position: sticky; bottom: calc(var(--admin-nav-h) + env(safe-area-inset-bottom)); background: var(--surface-2); padding: 10px 0; }
+@media (min-width: 900px) { .stock-save { bottom: 0; } }
+.stock-moves { list-style: none; margin: 0; padding: 0; }
+.stock-moves li { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
+.stock-moves li:last-child { border-bottom: 0; }
+.stock-delta { flex: none; min-width: 44px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stock-delta-down { color: var(--bad); }
+.stock-delta-up { color: var(--ok); }
+.stock-move-what { min-width: 0; }
+
+/* Sales channels: numbered set-up steps. */
+.ch-status-on { border-left: 4px solid var(--ok); }
+.ch-error { color: var(--bad); }
+.ch-steps { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.ch-step { display: flex; gap: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+.ch-step-n {
+  flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  font-weight: 700; background: var(--surface-2); color: var(--ink-soft); border: 1px solid var(--line);
+}
+.ch-step-done .ch-step-n { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.ch-step-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.ch-step-body p { margin: 0; }
+.ch-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.ch-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.ch-review { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.ch-review-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ch-review-title { margin: 8px 0 4px; }
+.ch-options { display: flex; flex-direction: column; gap: 8px; }
+.ch-options input[type="number"] { margin-top: 6px; width: 100%; max-width: 260px; }
 .stat-tile.stat-bad { border-top-color: var(--bad); }
 .stat-tile.stat-warn { border-top-color: var(--accent); }
 

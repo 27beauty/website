@@ -8,6 +8,19 @@
 import type { Env, EbayAccount } from '../../types';
 import type { EbayTokenResponse } from './types';
 import { fetchWithRetry } from './http';
+import { decryptSecret, encryptSecret } from '../crypto';
+
+/**
+ * What the seller consents to when connecting a shop: read/write listings
+ * (Trading API accepts the base scope), inventory, and reading orders so
+ * eBay sales can come off the central stock count.
+ */
+export const SELLER_SCOPES = [
+  'https://api.ebay.com/oauth/api_scope',
+  'https://api.ebay.com/oauth/api_scope/sell.inventory',
+  'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly',
+];
+const CONSENT_URL = 'https://auth.ebay.com/oauth2/authorize';
 
 const TOKEN_URL = 'https://api.ebay.com/identity/v1/oauth2/token';
 const SAFETY_MARGIN_SECONDS = 60;
@@ -74,8 +87,7 @@ export async function getAppAccessToken(env: Env, account: EbayAccount): Promise
  * to browse mode cleanly rather than throwing.
  */
 export async function getUserAccessToken(env: Env, account: EbayAccount): Promise<string | null> {
-  if (!account.refresh_token_var) return null;
-  const refreshToken = readSecret(env, account.refresh_token_var);
+  const refreshToken = await refreshTokenFor(env, account);
   if (!refreshToken) return null;
 
   const key = kvKey('sell', account.id);
@@ -87,11 +99,59 @@ export async function getUserAccessToken(env: Env, account: EbayAccount): Promis
     new URLSearchParams({
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
-      scope: 'https://api.ebay.com/oauth/api_scope/sell.inventory',
+      // A shop connected through the admin consented to SELLER_SCOPES; an
+      // older env-var token was only ever issued for sell.inventory.
+      scope: account.refresh_token_enc ? SELLER_SCOPES.join(' ') : 'https://api.ebay.com/oauth/api_scope/sell.inventory',
     }),
   );
   await cacheToken(env, key, token);
   return token.access_token;
+}
+
+/** The seller's refresh token: from the admin "Connect" flow first, else a named Worker secret. */
+async function refreshTokenFor(env: Env, account: EbayAccount): Promise<string | null> {
+  if (account.refresh_token_enc) {
+    return decryptSecret(account.refresh_token_enc, env.SESSION_SECRET);
+  }
+  if (!account.refresh_token_var) return null;
+  return readSecret(env, account.refresh_token_var) ?? null;
+}
+
+export function sellerConnected(account: EbayAccount): boolean {
+  return Boolean(account.refresh_token_enc || account.refresh_token_var);
+}
+
+/** Where to send the owner to grant access. `prompt=login` makes eBay ask which shop to sign in as. */
+export function consentUrl(env: Env, state: string): string {
+  if (!env.EBAY_CLIENT_ID || !env.EBAY_RUNAME) throw new Error('EBAY_CLIENT_ID / EBAY_RUNAME are not configured');
+  const params = new URLSearchParams({
+    client_id: env.EBAY_CLIENT_ID,
+    response_type: 'code',
+    redirect_uri: env.EBAY_RUNAME,
+    scope: SELLER_SCOPES.join(' '),
+    state,
+    prompt: 'login',
+  });
+  return `${CONSENT_URL}?${params.toString()}`;
+}
+
+/** Swaps the one-time consent code for a refresh token, encrypted ready to store. */
+export async function exchangeConsentCode(env: Env, code: string): Promise<{ encryptedRefreshToken: string; accessToken: string }> {
+  if (!env.EBAY_RUNAME) throw new Error('EBAY_RUNAME is not configured');
+  const token = (await requestToken(
+    env,
+    new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: env.EBAY_RUNAME }),
+  )) as EbayTokenResponse & { refresh_token?: string };
+  if (!token.refresh_token) throw new Error('eBay did not return a refresh token');
+  return {
+    encryptedRefreshToken: await encryptSecret(token.refresh_token, env.SESSION_SECRET),
+    accessToken: token.access_token,
+  };
+}
+
+/** Drops a cached user token, e.g. after reconnecting a shop. */
+export async function forgetUserToken(env: Env, account: EbayAccount): Promise<void> {
+  await env.KV.delete(kvKey('sell', account.id));
 }
 
 /** Reads a named Worker secret off `env` (e.g. "EBAY_REFRESH_TOKEN_2"). */

@@ -39,6 +39,7 @@ function makeProduct(overrides: Partial<Product> = {}): Product {
     price_locked: 0,
     stock_locked: 0,
     content_locked: 0,
+    merged_into: null,
     weight_g: null,
     length_cm: null,
     width_cm: null,

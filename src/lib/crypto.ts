@@ -110,3 +110,37 @@ export function secretsMatch(a: string | undefined, b: string | undefined): bool
   if (!a || !b) return false;
   return timingSafeEqual(encoder.encode(a), encoder.encode(b));
 }
+
+/**
+ * AES-GCM encryption for secrets that have to live in the database (an eBay
+ * seller's refresh token). The key is derived from SESSION_SECRET with HKDF,
+ * so a database copy alone is useless. Output: "<iv>.<ciphertext>", base64url.
+ */
+async function aesKey(secret: string): Promise<CryptoKey> {
+  const base = await crypto.subtle.importKey('raw', encoder.encode(secret), 'HKDF', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: encoder.encode('27beauty:stored-secrets'), info: encoder.encode('v1') },
+    base,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+
+export async function encryptSecret(plain: string, secret: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(secret), encoder.encode(plain));
+  return `${base64UrlEncode(iv)}.${base64UrlEncode(ct)}`;
+}
+
+/** Returns null if the value was tampered with or encrypted under another key. */
+export async function decryptSecret(stored: string, secret: string): Promise<string | null> {
+  const [iv, ct] = stored.split('.');
+  if (!iv || !ct) return null;
+  try {
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64UrlDecode(iv) }, await aesKey(secret), base64UrlDecode(ct));
+    return new TextDecoder().decode(plain);
+  } catch {
+    return null;
+  }
+}

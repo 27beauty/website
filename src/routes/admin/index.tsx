@@ -10,6 +10,7 @@ import { coupons } from './coupons';
 import { settings } from './settings';
 import { b2b } from './b2b';
 import { analytics } from './analytics';
+import { channels } from './channels';
 import { getAdmin, requireAdmin } from '../../lib/admin-auth';
 import { AdminLayout } from '../../ui/admin-layout';
 import { formatPence } from '../../lib/money';
@@ -44,7 +45,7 @@ admin.get('/', async (c) => {
   const session = getAdmin(c);
   const flash = { msg: c.req.query('msg') ?? null, err: c.req.query('err') ?? null };
 
-  const [orderStats, awaitingRow, productStats, lastSync, lowStockRows, p2gStats, p2gEnabled, newB2bRow] = await Promise.all([
+  const [orderStats, awaitingRow, productStats, lastSync, lowStockRows, p2gStats, p2gEnabled, newB2bRow, reviewRow] = await Promise.all([
     c.env.DB.prepare(
       `SELECT
          COALESCE(SUM(CASE WHEN date(created_at) = date('now') THEN total_pence ELSE 0 END), 0) AS today_revenue,
@@ -75,7 +76,9 @@ admin.get('/', async (c) => {
     ).first<{ to_book: number; booked_today: number; errored: number }>(),
     getSetting<boolean>(c.env, 'parcel2go.enabled', false),
     c.env.DB.prepare("SELECT COUNT(*) AS n FROM b2b_inquiries WHERE status = 'new'").first<{ n: number }>(),
+    c.env.DB.prepare("SELECT COUNT(*) AS n FROM channel_listings WHERE status = 'review'").first<{ n: number }>(),
   ]);
+  const toReview = reviewRow?.n ?? 0;
 
   const newB2bCount = newB2bRow?.n ?? 0;
   const stats: OrderStats = orderStats ?? { today_revenue: 0, today_orders: 0, revenue_30d: 0, orders_30d: 0 };
@@ -129,6 +132,15 @@ admin.get('/', async (c) => {
           <div class="stat-label">Out of stock</div>
           <div class="stat-value">{pStats.out_of_stock}</div>
         </div>
+        {toReview > 0 ? (
+          <div class="stat-tile stat-warn">
+            <div class="stat-label">Listings to match</div>
+            <div class="stat-value">{toReview}</div>
+            <div class="stat-sub">
+              <a href="/admin/channels/review">Review matches →</a>
+            </div>
+          </div>
+        ) : null}
         <div class={`stat-tile ${newB2bCount > 0 ? 'stat-warn' : ''}`}>
           <div class="stat-label">New trade enquiries</div>
           <div class="stat-value">{newB2bCount}</div>
@@ -242,6 +254,7 @@ admin.get('/', async (c) => {
 
 admin.route('/products', products);
 admin.route('/stock', stock);
+admin.route('/channels', channels);
 admin.route('/categories', categories);
 admin.route('/orders', orders);
 admin.route('/analytics', analytics);

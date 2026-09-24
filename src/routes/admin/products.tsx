@@ -8,6 +8,8 @@ import { clampInt, parseJsonArray, poundsToPence, uniqueSlug } from '../../lib/u
 import { randomToken } from '../../lib/crypto';
 import { basketCouponCode, couponQrUrl, formatCouponCode, productCouponCode, renderQrSvg } from '../../lib/qr';
 import { getSetting } from '../../lib/settings';
+import { setStock } from '../../lib/stock';
+import { pushSoon } from '../../lib/channels';
 import {
   canStore,
   deleteProductImages,
@@ -332,20 +334,18 @@ products.post('/bulk-stock', async (c) => {
   if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
     return c.redirect(redirectWith(back, { err: 'Your session expired — please try again.' }), 303);
   }
-  let count = 0;
+  const updates: { productId: number; quantity: number }[] = [];
   for (const [key, value] of Object.entries(body)) {
     const m = /^stock_(\d+)$/.exec(key);
     if (!m || typeof value !== 'string') continue;
     const n = parseInt(value, 10);
     if (!Number.isFinite(n)) continue;
-    const stock = Math.max(0, Math.trunc(n));
-    const res = await c.env.DB.prepare(
-      "UPDATE products SET stock = ?, updated_at = datetime('now') WHERE id = ? AND stock != ? AND stock_locked = 0",
-    )
-      .bind(stock, Number(m[1]), stock)
-      .run();
-    count += res.meta.changes ?? 0;
+    updates.push({ productId: Number(m[1]), quantity: Math.max(0, Math.trunc(n)) });
   }
+  // Through the stock ledger, then out to every linked eBay/Amazon listing.
+  const moved = await setStock(c.env, updates, 'admin', 'Products list');
+  pushSoon(c.env, c.executionCtx, moved);
+  const count = moved.length;
   return c.redirect(redirectWith(back, { msg: `Updated stock for ${count} product${count === 1 ? '' : 's'}.` }), 303);
 });
 
@@ -716,7 +716,7 @@ products.post('/new', async (c) => {
       price,
       compareAt,
       cost,
-      stock,
+      0, // the opening count goes through the stock ledger just below
       values.image_url || null,
       JSON.stringify(images),
       values.status,
@@ -728,6 +728,7 @@ products.post('/new', async (c) => {
     )
     .run();
   const id = result.meta.last_row_id as number;
+  await setStock(c.env, [{ productId: id, quantity: stock }], 'admin', 'New product');
   return c.redirect(`/admin/products/${id}?msg=${encodeURIComponent('Product created.')}`, 303);
 });
 
@@ -792,6 +793,8 @@ products.post('/import', async (c) => {
   let created = 0;
   let updated = 0;
   let skipped = 0;
+  /** Stock from the file, applied through the stock ledger once every row is in. */
+  const csvStock: { productId: number; quantity: number }[] = [];
   const rowErrors: string[] = [];
 
   for (let i = 0; i < rows.length; i++) {
@@ -833,7 +836,6 @@ products.post('/import', async (c) => {
       await c.env.DB.prepare(
         `UPDATE products SET
            price_pence = CASE WHEN price_locked = 1 THEN price_pence ELSE ? END,
-           stock = CASE WHEN stock_locked = 1 THEN stock ELSE ? END,
            category_id = COALESCE(?, category_id),
            image_url = COALESCE(?, image_url),
            description = CASE WHEN content_locked = 1 THEN description ELSE COALESCE(?, description) END,
@@ -841,19 +843,35 @@ products.post('/import', async (c) => {
            updated_at = datetime('now')
          WHERE id = ?`,
       )
-        .bind(price, stock, categoryId, imageUrl, description, sku, existingId)
+        .bind(price, categoryId, imageUrl, description, sku, existingId)
         .run();
+      csvStock.push({ productId: existingId, quantity: stock });
       updated++;
     } else {
       const slug = await uniqueSlug(c.env.DB, 'products', title);
       await c.env.DB.prepare(
         `INSERT INTO products (slug, title, description, category_id, sku, price_pence, stock, image_url, status, source)
-         VALUES (?,?,?,?,?,?,?,?, 'active', 'csv')`,
+         VALUES (?,?,?,?,?,?,0,?, 'active', 'csv')`,
       )
-        .bind(slug, title, description, categoryId, sku, price, stock, imageUrl)
+        .bind(slug, title, description, categoryId, sku, price, imageUrl)
         .run();
+      const newRow = await c.env.DB.prepare('SELECT id FROM products WHERE slug = ?').bind(slug).first<{ id: number }>();
+      if (newRow) csvStock.push({ productId: newRow.id, quantity: stock });
       created++;
     }
+  }
+
+  // Rows for stock-locked products keep their count, as before.
+  if (csvStock.length) {
+    const ids = csvStock.map((u) => u.productId);
+    const { results: locked } = await c.env.DB.prepare(
+      `SELECT id FROM products WHERE stock_locked = 1 AND id IN (${ids.map(() => '?').join(',')})`,
+    )
+      .bind(...ids)
+      .all<{ id: number }>();
+    const lockedIds = new Set((locked ?? []).map((r) => r.id));
+    const moved = await setStock(c.env, csvStock.filter((u) => !lockedIds.has(u.productId)), 'admin', 'CSV import');
+    pushSoon(c.env, c.executionCtx, moved);
   }
 
   return c.html(
@@ -1148,7 +1166,7 @@ products.post('/:id', async (c) => {
   await c.env.DB.prepare(
     `UPDATE products SET
        title = ?, description = ?, category_id = ?, brand = ?, sku = ?, price_pence = ?, compare_at_pence = ?,
-       cost_pence = ?, stock = ?, image_url = ?, images_json = ?, status = ?, featured = ?,
+       cost_pence = ?, image_url = ?, images_json = ?, status = ?, featured = ?,
        price_locked = ?, stock_locked = ?, content_locked = ?,
        weight_g = ?, length_cm = ?, width_cm = ?, height_cm = ?, updated_at = datetime('now')
      WHERE id = ?`,
@@ -1162,7 +1180,6 @@ products.post('/:id', async (c) => {
       price,
       compareAt,
       cost,
-      stock,
       values.image_url || null,
       JSON.stringify(images),
       values.status,
@@ -1174,6 +1191,7 @@ products.post('/:id', async (c) => {
       id,
     )
     .run();
+  pushSoon(c.env, c.executionCtx, await setStock(c.env, [{ productId: id, quantity: stock }], 'admin', 'Product page'));
 
   return c.redirect(`/admin/products/${id}?msg=${encodeURIComponent('Saved.')}`, 303);
 });

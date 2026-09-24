@@ -30,6 +30,14 @@ export interface Env {
   SYNC_TOKEN?: string;
   PARCEL2GO_CLIENT_ID?: string;
   PARCEL2GO_CLIENT_SECRET?: string;
+  /** eBay "RuName" for the seller consent redirect (developer portal → User Tokens). Not secret. */
+  EBAY_RUNAME?: string;
+  /** Amazon SP-API (Login with Amazon) app credentials and the seller's self-authorised refresh token. */
+  AMAZON_LWA_CLIENT_ID?: string;
+  AMAZON_LWA_CLIENT_SECRET?: string;
+  AMAZON_REFRESH_TOKEN?: string;
+  /** Seller Central "Merchant Token". */
+  AMAZON_SELLER_ID?: string;
 }
 
 /** Hono context variables set by middleware in src/index.ts. */
@@ -99,6 +107,8 @@ export interface Product {
   stock_locked: number;
   content_locked: number;
   /** Parcel size for shipping; null = use the default from Settings. */
+  /** Set when this product was folded into another (same item in both eBay shops). */
+  merged_into: number | null;
   weight_g: number | null;
   length_cm: number | null;
   width_cm: number | null;
@@ -201,12 +211,52 @@ export interface B2bInquiry {
   created_at: string;
 }
 
+export type SalesChannel = 'ebay' | 'amazon';
+
+export interface ChannelListing {
+  id: number;
+  product_id: number | null;
+  channel: SalesChannel;
+  account: string;
+  external_id: string;
+  sku: string | null;
+  asin: string | null;
+  title: string;
+  /** merchant = you ship it; amazon = FBA, never pushed to or counted. */
+  fulfilment: 'merchant' | 'amazon';
+  status: 'linked' | 'review' | 'ignored';
+  match_score: number | null;
+  suggested_product_id: number | null;
+  channel_qty: number | null;
+  pushed_qty: number | null;
+  pushed_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type StockReason = 'website_sale' | 'ebay_sale' | 'amazon_sale' | 'cancel' | 'admin' | 'start' | 'merge';
+
+export interface StockMovement {
+  id: number;
+  product_id: number;
+  delta: number;
+  stock_after: number | null;
+  reason: StockReason;
+  ref: string;
+  note: string | null;
+  created_at: string;
+}
+
 export interface EbayAccount {
   id: number;
   label: string;
   seller_username: string | null;
   mode: 'browse' | 'sell';
   refresh_token_var: string | null;
+  /** Seller consent from the admin "Connect" button, AES-GCM encrypted (src/lib/crypto.ts). */
+  refresh_token_enc: string | null;
+  connected_at: string | null;
   markup_percent: number;
   default_category_id: number | null;
   auto_publish: number;

@@ -34,8 +34,11 @@ bucket_name = "27beauty-media"
 
 # eBay sync runs every 10 minutes. Kept well under eBay's default Browse API
 # daily call quota (~5,000/day/app) — see docs/ebay-setup.md.
+# The 5-minute trigger is the centralised stock job (src/lib/channels.ts): it
+# reads eBay/Amazon sales and pushes the master count out. It runs as its own
+# invocation so it gets its own outbound-request budget.
 [triggers]
-crons = ["*/10 * * * *"]
+crons = ["*/10 * * * *", "*/5 * * * *"]
 
 [[routes]]
 pattern = "27beauty.co.uk"

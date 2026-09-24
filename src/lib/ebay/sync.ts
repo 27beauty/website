@@ -1,6 +1,7 @@
 import type { EbayAccount, Env } from '../../types';
 import { applyMarkup } from '../money';
 import { getSetting } from '../settings';
+import { centralStockEnabled } from '../stock';
 import { uniqueSlug } from '../util';
 import { fetchBrowseListings } from './browse';
 import { diffListings, locksFromRow, resolveUpdateFields, type ExistingProductRow } from './diff';
@@ -56,6 +57,9 @@ export async function runEbaySync(env: Env, trigger: 'cron' | 'manual' | 'api'):
 
   try {
     const importOutOfStock = await getSetting<boolean>(env, 'ebay.import_out_of_stock', false);
+    // Once the website is the master stock count, the sync still imports new
+    // listings and content but never writes a quantity (src/lib/stock.ts).
+    const centralStock = await centralStockEnabled(env);
     const accounts = await listActiveAccounts(env);
     const rules = await loadCategoryRules(env);
 
@@ -72,6 +76,7 @@ export async function runEbaySync(env: Env, trigger: 'cron' | 'manual' | 'api'):
         const outcome = await syncAccount(env, account, {
           rules,
           importOutOfStock,
+          centralStock,
           maxListings: remainingBudget,
         });
         result.created += outcome.created;
@@ -122,7 +127,7 @@ interface AccountSyncOutcome {
 async function syncAccount(
   env: Env,
   account: EbayAccount,
-  opts: { rules: CategoryRule[]; importOutOfStock: boolean; maxListings: number },
+  opts: { rules: CategoryRule[]; importOutOfStock: boolean; centralStock: boolean; maxListings: number },
 ): Promise<AccountSyncOutcome> {
   const errors: string[] = [];
   // Products are matched to an account by this key, stored in ebay_account.
@@ -212,7 +217,9 @@ async function syncAccount(
 
   let updated = 0;
   for (const { product, listing } of diff.toUpdate) {
+    if (product.merged_into) continue;
     const locks = locksFromRow(product);
+    if (opts.centralStock) locks.stockLocked = true;
     const categoryId = mapCategory(listing, opts.rules, account.default_category_id);
     const fields = resolveUpdateFields(locks, {
       pricePence: listing.pricePence === null ? null : applyMarkup(listing.pricePence, account.markup_percent),
@@ -268,13 +275,14 @@ async function syncAccount(
   let ended = 0;
   if (account.mode === 'sell') {
     for (const row of diff.toEnd) {
+      if (row.merged_into) continue;
       const missCount = row.ebay_miss_count + 1;
       if (missCount >= MISS_THRESHOLD) {
         ended++;
         statements.push(
           env.DB.prepare(
             `UPDATE products
-             SET stock = 0, ebay_stock = 0, status = 'archived', ebay_miss_count = ?, ebay_synced_at = datetime('now'), updated_at = datetime('now')
+             SET ${opts.centralStock ? '' : 'stock = 0, '}ebay_stock = 0, status = 'archived', ebay_miss_count = ?, ebay_synced_at = datetime('now'), updated_at = datetime('now')
              WHERE id = ?`,
           ).bind(missCount, row.id),
         );
@@ -304,7 +312,7 @@ async function listActiveAccounts(env: Env): Promise<EbayAccount[]> {
 
 async function listAccountProducts(env: Env, accountLabel: string): Promise<ExistingProductRow[]> {
   const { results } = await env.DB.prepare(
-    `SELECT id, ebay_item_id, price_locked, stock_locked, content_locked, ebay_miss_count
+    `SELECT id, ebay_item_id, price_locked, stock_locked, content_locked, ebay_miss_count, merged_into
      FROM products WHERE source = 'ebay' AND ebay_account = ?`,
   )
     .bind(accountLabel)

@@ -4,7 +4,8 @@ import { getAdmin, verifyCsrf } from '../../lib/admin-auth';
 import { AdminLayout, AdminPrintPage, CsrfField } from '../../ui/admin-layout';
 import { formatPence } from '../../lib/money';
 import { clampInt } from '../../lib/util';
-import { getOrderWithItems, type OrderWithItems } from '../../lib/orders';
+import { getOrderWithItems, restockCancelledOrder, type OrderWithItems } from '../../lib/orders';
+import { pushSoon } from '../../lib/channels';
 import { getSetting } from '../../lib/settings';
 import {
   bookShipment,
@@ -1012,14 +1013,7 @@ orders.post('/:id/cancel', async (c) => {
   }
 
   if (loaded.order.stock_applied) {
-    const restocks = loaded.items
-      .filter((item) => item.product_id)
-      .map((item) =>
-        c.env.DB.prepare(
-          "UPDATE products SET stock = stock + ?, updated_at = datetime('now') WHERE id = ?",
-        ).bind(item.quantity, item.product_id),
-      );
-    if (restocks.length) await c.env.DB.batch(restocks);
+    pushSoon(c.env, c.executionCtx, await restockCancelledOrder(c.env, id));
   }
 
   return c.redirect(

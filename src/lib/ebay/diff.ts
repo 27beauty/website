@@ -13,6 +13,8 @@ export interface ExistingProductRow {
   stock_locked: number;
   content_locked: number;
   ebay_miss_count: number;
+  /** Folded into another product (same item listed twice) — the sync leaves it alone. */
+  merged_into?: number | null;
 }
 
 export interface ListingDiff {

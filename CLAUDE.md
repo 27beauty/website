@@ -14,8 +14,8 @@ scans it, lands here and gets 10% off with a coupon code.
 | Sessions/cache | Cloudflare KV — binding `KV`                                   |
 | Images         | Cloudflare R2 — binding `MEDIA`                                |
 | Payments       | Stripe Checkout (hosted card page) + webhook                   |
-| Scheduling     | Workers Cron Triggers (`*/10 * * * *`) → eBay sync             |
-| Tests          | Vitest (pure logic; no network)                                |
+| Scheduling     | Cron: `*/10` → eBay catalogue sync; `*/5` → centralised stock  |
+| Tests          | Vitest: pure logic + real SQLite (node:sqlite) for stock; no network |
 
 ## Commands
 
@@ -49,6 +49,11 @@ npm run db:seed:local      # categories, settings, QR10 coupon
 - Types come from `src/types.ts`. Extend that file rather than redeclaring rows.
 - Prices, stock and product content that the owner has edited are protected from
   the eBay sync by the `price_locked`, `stock_locked` and `content_locked` flags.
+- **Stock changes only go through `src/lib/stock.ts`** (`adjustStock` /
+  `setStock`). They write the `stock_movements` ledger in the same batch;
+  `UNIQUE(reason, ref)` is what stops a marketplace order counting twice. Never
+  `UPDATE products SET stock` directly. After a change, `pushSoon` (or the
+  5-minute cron) sends the count to linked listings. See `docs/central-stock.md`.
 - `products.stock` is what the website sells from; `products.ebay_stock` is what
   the last sync saw on eBay and is recorded even when `stock_locked` is set, so
   Admin → Stock can show the two side by side.
@@ -90,8 +95,16 @@ src/lib/parcel2go.ts     Parcel2Go: quotes, book + pay from PrePay, labels (owne
 src/lib/analytics.ts     cookieless page-view/basket/checkout tracking (no IPs stored; daily-rotating
                          visitor hash; skips bots, DNT/GPC and the owner's devices)
 src/lib/analytics-report.ts  Admin → Analytics queries (SQL window functions) + suggestions
+src/lib/stock.ts         the stock ledger: every change to products.stock
+src/lib/channels.ts      centralised stock: listings ↔ products, marketplace sales in,
+                         master count out; the */5 cron job (budgeted for Workers Free)
+src/lib/matching.ts      title/SKU matching of listings to products (numbers = identity)
+src/lib/ebay/trading.ts  Trading API XML: ReviseInventoryStatus, GetMyeBaySelling
+src/lib/ebay/orders.ts   Fulfillment API orders → sale lines
+src/lib/amazon/spapi.ts  Amazon SP-API: listings, MFN orders, FBM quantity
+src/routes/admin/channels.tsx  Sales channels (connect, go-live) + Review matches
 src/routes/admin/stock.tsx  the Stock screen: website vs eBay quantity per channel
-migrations/              D1 schema, 0001–0009. Two files share each of the numbers 0003 and 0004
+migrations/              D1 schema, 0001–0010. Two files share each of the numbers 0003 and 0004
                          (parallel branches); production has applied all of them under these
                          exact names, so never rename a migration file.
 db/                      seed.sql (reference data), ebay-catalogue.sql (the 90

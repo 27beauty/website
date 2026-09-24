@@ -23,3 +23,13 @@ SYNC_TOKEN="dev-sync-token"
 # issued.
 PARCEL2GO_CLIENT_ID="..."
 PARCEL2GO_CLIENT_SECRET="..."
+
+# Centralised stock (docs/central-stock.md). eBay "RuName" from the Production
+# keyset's User Tokens page — not secret.
+EBAY_RUNAME="..."
+# Amazon SP-API: app client id/secret, the self-authorised refresh token, and
+# the Seller Central Merchant Token.
+AMAZON_LWA_CLIENT_ID="..."
+AMAZON_LWA_CLIENT_SECRET="..."
+AMAZON_REFRESH_TOKEN="..."
+AMAZON_SELLER_ID="..."

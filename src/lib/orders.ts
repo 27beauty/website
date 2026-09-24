@@ -1,5 +1,6 @@
 import type { CartLine, CartTotals, Env, Order, OrderItem, OrderStatus, ShippingAddress } from '../types';
 import { generateOrderNumber } from './util';
+import { adjustStock } from './stock';
 
 /**
  * Order creation, lookup and state transitions. All money fields are copied
@@ -181,17 +182,51 @@ async function applyStockForOrder(env: Env, orderId: number): Promise<void> {
   if ((guard.meta.changes ?? 0) === 0) return; // another webhook delivery already applied it
 
   const { results } = await env.DB.prepare(
-    'SELECT product_id, quantity FROM order_items WHERE order_id = ? AND product_id IS NOT NULL',
+    'SELECT id, product_id, quantity FROM order_items WHERE order_id = ? AND product_id IS NOT NULL',
   )
     .bind(orderId)
-    .all<{ product_id: number; quantity: number }>();
+    .all<{ id: number; product_id: number; quantity: number }>();
 
-  const decrements = (results ?? []).map((row) =>
-    env.DB.prepare(
-      `UPDATE products SET stock = MAX(0, stock - ?), updated_at = datetime('now') WHERE id = ?`,
-    ).bind(row.quantity, row.product_id),
+  // Through the stock ledger so every channel sees the sale (src/lib/stock.ts).
+  await adjustStock(
+    env,
+    (results ?? []).map((row) => ({
+      productId: row.product_id,
+      delta: -row.quantity,
+      reason: 'website_sale' as const,
+      ref: `order:${orderId}:${row.id}`,
+      note: `Website order`,
+    })),
   );
-  if (decrements.length) await env.DB.batch(decrements);
+}
+
+/** Puts a cancelled website order's items back, once per order line. */
+export async function restockCancelledOrder(env: Env, orderId: number): Promise<number[]> {
+  const { results } = await env.DB.prepare(
+    'SELECT id, product_id, quantity FROM order_items WHERE order_id = ? AND product_id IS NOT NULL',
+  )
+    .bind(orderId)
+    .all<{ id: number; product_id: number; quantity: number }>();
+  return adjustStock(
+    env,
+    (results ?? []).map((row) => ({
+      productId: row.product_id,
+      delta: row.quantity,
+      reason: 'cancel' as const,
+      ref: `order:${orderId}:${row.id}`,
+      note: 'Website order cancelled',
+    })),
+  );
+}
+
+/** Product ids in an order — what to push out to the marketplaces after it changes stock. */
+export async function orderProductIds(env: Env, orderId: number): Promise<number[]> {
+  const { results } = await env.DB.prepare(
+    'SELECT DISTINCT product_id FROM order_items WHERE order_id = ? AND product_id IS NOT NULL',
+  )
+    .bind(orderId)
+    .all<{ product_id: number }>();
+  return (results ?? []).map((r) => r.product_id);
 }
 
 export interface MarkOrderPaidInput {
