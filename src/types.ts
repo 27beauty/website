@@ -36,7 +36,16 @@ export interface Env {
 export type Variables = {
   admin?: AdminSession;
   cartCount: number;
+  /** Extra detail a storefront route adds to its analytics page view (src/lib/analytics.ts). */
+  track?: TrackDetail;
 };
+
+export interface TrackDetail {
+  productId?: number;
+  searchTerm?: string;
+  searchResults?: number;
+  campaign?: string;
+}
 
 export type AppBindings = { Bindings: Env; Variables: Variables };
 

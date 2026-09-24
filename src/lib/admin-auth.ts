@@ -5,6 +5,7 @@
  */
 import type { Context, MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
+import { markOwnerDevice } from './analytics';
 import type { AdminSession, AppBindings, Env } from '../types';
 import { randomToken, secretsMatch, signPayload, verifyPayload, verifyPassword } from './crypto';
 
@@ -94,6 +95,7 @@ export async function createSession(c: Context<AppBindings>, user: LoginUser): P
     path: '/admin',
     maxAge: SESSION_TTL_SECONDS,
   });
+  markOwnerDevice(c);
 }
 
 /** Loads the current session (if any) without requiring one to exist. */

@@ -9,6 +9,7 @@ import { orders } from './orders';
 import { coupons } from './coupons';
 import { settings } from './settings';
 import { b2b } from './b2b';
+import { analytics } from './analytics';
 import { getAdmin, requireAdmin } from '../../lib/admin-auth';
 import { AdminLayout } from '../../ui/admin-layout';
 import { formatPence } from '../../lib/money';
@@ -147,6 +148,9 @@ admin.get('/', async (c) => {
         <a class="btn btn-secondary" href="/admin/orders?view=shipping">
           Orders to fulfil
         </a>
+        <a class="btn btn-secondary" href="/admin/analytics">
+          Analytics
+        </a>
         <a class="btn btn-secondary" href="/admin/coupons/new">
           + New coupon
         </a>
@@ -240,6 +244,7 @@ admin.route('/products', products);
 admin.route('/stock', stock);
 admin.route('/categories', categories);
 admin.route('/orders', orders);
+admin.route('/analytics', analytics);
 admin.route('/coupons', coupons);
 admin.route('/b2b', b2b);
 admin.route('/settings', settings);

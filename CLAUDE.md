@@ -87,8 +87,11 @@ src/routes/admin/          admin panel routes
 src/lib/qr.ts            QR SVG rendering + coupon code generation
 src/lib/media.ts         R2 storage budget, cleanup and usage accounting
 src/lib/parcel2go.ts     Parcel2Go: quotes, book + pay from PrePay, labels (owner clicks; never automatic)
+src/lib/analytics.ts     cookieless page-view/basket/checkout tracking (no IPs stored; daily-rotating
+                         visitor hash; skips bots, DNT/GPC and the owner's devices)
+src/lib/analytics-report.ts  Admin → Analytics queries (SQL window functions) + suggestions
 src/routes/admin/stock.tsx  the Stock screen: website vs eBay quantity per channel
-migrations/              D1 schema, 0001–0008. Two files share each of the numbers 0003 and 0004
+migrations/              D1 schema, 0001–0009. Two files share each of the numbers 0003 and 0004
                          (parallel branches); production has applied all of them under these
                          exact names, so never rename a migration file.
 db/                      seed.sql (reference data), ebay-catalogue.sql (the 90

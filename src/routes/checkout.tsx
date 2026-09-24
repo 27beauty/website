@@ -16,6 +16,7 @@ import {
 } from '../lib/orders';
 import { buildDiscountCouponParams, createCheckoutSession, getStripeClient } from '../lib/stripe';
 import { Layout } from '../ui/layout';
+import { trackEvent } from '../lib/analytics';
 
 /** Checkout flow: straight to Stripe Checkout (no details form of our own — Stripe collects email/address/name itself), plus success/cancel pages. */
 export const checkout = new Hono<AppBindings>();
@@ -96,6 +97,7 @@ async function startCheckout(c: Context<AppBindings>) {
   }
 
   const order = await createPendingOrder(env, { cart, email: null, name: null });
+  trackEvent(c, { type: 'checkout', orderId: order.id });
 
   try {
     const discountParams = buildDiscountCouponParams(cart.discountPence);

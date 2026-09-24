@@ -10,6 +10,7 @@ import { webhooks } from './routes/webhooks';
 import { api } from './routes/api';
 import { admin } from './routes/admin/index';
 import { runEbaySync } from './lib/ebay/sync';
+import { pageViewMiddleware, pruneAnalytics } from './lib/analytics';
 
 const app = new Hono<AppBindings>();
 
@@ -48,6 +49,9 @@ app.use('*', async (c, next) => {
   );
   await next();
 });
+
+/** Cookieless shop analytics: records storefront page views (see src/lib/analytics.ts). */
+app.use('*', pageViewMiddleware);
 
 /**
  * Product images uploaded through the admin panel live in R2 and are served
@@ -142,5 +146,14 @@ export default {
         console.error('Scheduled eBay sync failed', err);
       }),
     );
+    // Once a day (the 03:00 UTC run): drop analytics older than the retention window.
+    const at = new Date(event.scheduledTime);
+    if (at.getUTCHours() === 3 && at.getUTCMinutes() < 10) {
+      ctx.waitUntil(
+        pruneAnalytics(env).catch((err) => {
+          console.error('Analytics prune failed', err);
+        }),
+      );
+    }
   },
 } satisfies ExportedHandler<Env>;

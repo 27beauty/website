@@ -7,7 +7,7 @@ import type { FC, PropsWithChildren } from 'hono/jsx';
  * updates stock standing in a stockroom, packs orders at a kitchen table.
  */
 
-export type AdminSection = 'dashboard' | 'stock' | 'products' | 'orders' | 'coupons' | 'b2b' | 'settings';
+export type AdminSection = 'dashboard' | 'stock' | 'products' | 'orders' | 'analytics' | 'coupons' | 'b2b' | 'settings';
 
 export interface AdminLayoutProps {
   title: string;
@@ -25,6 +25,7 @@ const NAV_ICONS: Record<AdminSection, string> = {
   dashboard: 'M4 11.5 12 4l8 7.5M6 10.2V20h5v-5.5h2V20h5v-9.8',
   products: 'M13 4h5a2 2 0 0 1 2 2v5L11.5 19.5 4 12 13 4Z M15.5 8.5h.01',
   orders: 'M3 8l9-4 9 4-9 4-9-4Z M3 8v8l9 4 9-4V8 M12 12v8',
+  analytics: 'M4 20h16 M7 16v-4 M12 16V7 M17 16v-7',
   coupons: 'M4 9a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1.4a1.7 1.7 0 0 0 0 3.2V16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1.4a1.7 1.7 0 0 0 0-3.2V9Z',
   b2b: 'M4 21V9.5L12 4l8 5.5V21M9 21v-6h6v6M4 9.5h16',
   settings:
@@ -39,12 +40,14 @@ const NavIcon: FC<{ id: AdminSection }> = ({ id }) => (
   </span>
 );
 
-const NAV: Array<{ id: AdminSection; label: string; href: string }> = [
-  { id: 'dashboard', label: 'Dashboard', href: '/admin' },
+/** `short` replaces the label in the phone tab bar, where eight tabs share 390px. */
+const NAV: Array<{ id: AdminSection; label: string; short?: string; href: string }> = [
+  { id: 'dashboard', label: 'Dashboard', short: 'Home', href: '/admin' },
   // Stock sits second: it is the thing the owner opens the panel for most days.
   { id: 'stock', label: 'Stock', href: '/admin/stock' },
   { id: 'products', label: 'Products', href: '/admin/products' },
   { id: 'orders', label: 'Orders', href: '/admin/orders' },
+  { id: 'analytics', label: 'Stats', href: '/admin/analytics' },
   { id: 'coupons', label: 'Coupons', href: '/admin/coupons' },
   { id: 'b2b', label: 'Trade', href: '/admin/b2b' },
   { id: 'settings', label: 'Settings', href: '/admin/settings' },
@@ -127,7 +130,14 @@ export const AdminLayout: FC<PropsWithChildren<AdminLayoutProps>> = (props) => {
                 {NAV.map((item) => (
                   <a href={item.href} aria-current={props.active === item.id ? 'page' : undefined}>
                     <NavIcon id={item.id} />
-                    <span class="nav-label">{item.label}</span>
+                    {item.short ? (
+                      <span class="nav-label">
+                        <span class="nav-label-long">{item.label}</span>
+                        <span class="nav-label-short">{item.short}</span>
+                      </span>
+                    ) : (
+                      <span class="nav-label">{item.label}</span>
+                    )}
                   </a>
                 ))}
               </nav>

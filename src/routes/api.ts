@@ -3,11 +3,26 @@ import type { AppBindings } from '../types';
 import { secretsMatch } from '../lib/crypto';
 import { clampInt } from '../lib/util';
 import { runEbaySync } from '../lib/ebay/sync';
+import { parseBeacon, recordBeacon } from '../lib/analytics';
 
 /** Machine endpoints: eBay sync trigger, health check, product JSON feed. */
 export const api = new Hono<AppBindings>();
 
 const VERSION = '1.0.0';
+
+/**
+ * Leave-beacon from storefront pages: how long the page was visible and how
+ * far it was scrolled. Always 204 — a beacon has nobody to read an error.
+ */
+api.post('/beacon', async (c) => {
+  const beacon = parseBeacon(await c.req.text().catch(() => ''));
+  if (beacon) {
+    c.executionCtx.waitUntil(
+      recordBeacon(c.env, beacon).catch((err) => console.error('beacon write failed', err instanceof Error ? err.message : err)),
+    );
+  }
+  return c.body(null, 204);
+});
 
 api.get('/health', (c) => {
   return c.json({ ok: true, time: new Date().toISOString(), version: VERSION });

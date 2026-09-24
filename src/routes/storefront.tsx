@@ -26,6 +26,7 @@ import { formatPence } from '../lib/money';
 import { clampInt, excerpt, isEmail, normaliseCouponCode, parseJsonArray } from '../lib/util';
 import { createB2bInquiry } from '../lib/b2b';
 import { Layout } from '../ui/layout';
+import { trackEvent } from '../lib/analytics';
 import {
   Breadcrumbs,
   CategoryTile,
@@ -383,6 +384,7 @@ storefront.get('/search', async (c) => {
   const { items, total } = term
     ? await queryProducts(c.env, { search: term, sort, limit: PER_PAGE, offset: (page - 1) * PER_PAGE })
     : { items: [] as ProductWithCategory[], total: 0 };
+  if (term && page === 1) c.set('track', { searchTerm: term, searchResults: total });
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
 
   const makeHref = (p: number) => {
@@ -442,6 +444,7 @@ storefront.get('/search', async (c) => {
 storefront.get('/product/:slug', async (c) => {
   const product = await getProductBySlug(c.env, c.req.param('slug'));
   if (!product) return c.notFound();
+  c.set('track', { productId: product.id });
 
   const categories = await listCategories(c.env);
   const images = parseJsonArray(product.images_json);
@@ -736,6 +739,7 @@ storefront.post('/cart/add', async (c) => {
   const quantity = clampInt(body.quantity, 1, Math.min(MAX_LINE_QUANTITY, product.stock), 1);
   const lines = await readCartLines(c);
   await writeCartLines(c, addLine(lines, product.id, quantity));
+  trackEvent(c, { type: 'add', productId: product.id, quantity });
   return c.redirect(redirectTo, 303);
 });
 
@@ -794,6 +798,7 @@ async function qrLanding(c: Context<AppBindings>, codeRaw: string) {
   ]);
   const code = codeRaw.trim();
   let notice: { message: string; kind: 'ok' | 'bad' } | null = null;
+  c.set('track', { campaign: normaliseCouponCode(code).slice(0, 40) || undefined });
 
   // The basket is empty at this point, so the minimum-spend rule is not a
   // reason to reject the card — it becomes a hint further down instead.
@@ -1127,6 +1132,17 @@ storefront.get('/pages/:slug', async (c) => {
           <p>
             We use your data to fulfil and deliver your order, provide customer support, meet our legal and tax
             obligations, and — only with your consent — to occasionally email you about offers.
+          </p>
+          <h2>Website statistics</h2>
+          <p>
+            To understand which products interest people and improve the shop, we count how the site is used:
+            which pages are viewed, how long for and how far down, what is searched for, what goes in the basket,
+            the website or QR card that brought you here, and your device type and country. We do this without
+            cookies and without identifying you: your IP address is never stored, and visits are grouped using a
+            code that changes every day, so no one — including us — can link your visits together or back to you.
+            Nothing is shared with advertisers or other third parties, and these records are deleted after 180
+            days. If your browser sends a "Do Not Track" or Global Privacy Control signal, you aren't counted at
+            all.
           </p>
           <h2>Who we share it with</h2>
           <p>
