@@ -7,7 +7,7 @@ import type { FC, PropsWithChildren } from 'hono/jsx';
  * updates stock standing in a stockroom, packs orders at a kitchen table.
  */
 
-export type AdminSection = 'dashboard' | 'products' | 'orders' | 'coupons' | 'b2b' | 'settings';
+export type AdminSection = 'dashboard' | 'stock' | 'products' | 'orders' | 'coupons' | 'b2b' | 'settings';
 
 export interface AdminLayoutProps {
   title: string;
@@ -21,6 +21,7 @@ export interface AdminLayoutProps {
 
 /** Small line-icon set for the nav, drawn inline so there's no extra asset or build step. */
 const NAV_ICONS: Record<AdminSection, string> = {
+  stock: 'M3 7h18M3 12h18M3 17h18M7 4v3M7 10v4M7 17v3',
   dashboard: 'M4 11.5 12 4l8 7.5M6 10.2V20h5v-5.5h2V20h5v-9.8',
   products: 'M13 4h5a2 2 0 0 1 2 2v5L11.5 19.5 4 12 13 4Z M15.5 8.5h.01',
   orders: 'M3 8l9-4 9 4-9 4-9-4Z M3 8v8l9 4 9-4V8 M12 12v8',
@@ -40,6 +41,8 @@ const NavIcon: FC<{ id: AdminSection }> = ({ id }) => (
 
 const NAV: Array<{ id: AdminSection; label: string; href: string }> = [
   { id: 'dashboard', label: 'Dashboard', href: '/admin' },
+  // Stock sits second: it is the thing the owner opens the panel for most days.
+  { id: 'stock', label: 'Stock', href: '/admin/stock' },
   { id: 'products', label: 'Products', href: '/admin/products' },
   { id: 'orders', label: 'Orders', href: '/admin/orders' },
   { id: 'coupons', label: 'Coupons', href: '/admin/coupons' },

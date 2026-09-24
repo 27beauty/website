@@ -67,6 +67,18 @@ export function productCouponCode(percent: number, productTitle: string, suffix 
   return suffix > 0 ? `${base}${suffix + 1}` : base;
 }
 
+/**
+ * A code for a card that discounts the whole basket. Deliberately NOT named
+ * after a product: a customer holding a card marked "10OFFYORKSHIRETEA" would
+ * reasonably assume it only worked on the tea. "10OFFK7XQ" promises nothing it
+ * cannot keep, and the product it was printed for is recorded against the
+ * coupon for the owner's own tracking.
+ */
+export function basketCouponCode(percent: number, suffix = 0): string {
+  const base = `${Math.round(percent)}OFF${randomCode(4)}`;
+  return suffix > 0 ? `${base}${suffix + 1}` : base;
+}
+
 /** Print/display form of a stored code: "27BK7XQ" reads as "27B-K7XQ". */
 export function formatCouponCode(code: string, prefix = '27B'): string {
   return code.startsWith(prefix) && code.length > prefix.length

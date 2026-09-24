@@ -116,7 +116,7 @@ npx wrangler d1 execute 27beauty --remote \
 
 Follow [ebay-setup.md](ebay-setup.md), then in **Admin → Settings** add each eBay
 account and press **Sync now**. The cron trigger in `wrangler.toml`
-(`*/30 * * * *`) keeps it running every half hour after that.
+(`*/10 * * * *`) keeps it running every ten minutes after that.
 
 ## 9. Go-live checklist
 

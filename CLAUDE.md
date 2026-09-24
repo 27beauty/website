@@ -14,7 +14,7 @@ scans it, lands here and gets 10% off with a coupon code.
 | Sessions/cache | Cloudflare KV — binding `KV`                                   |
 | Images         | Cloudflare R2 — binding `MEDIA`                                |
 | Payments       | Stripe Checkout (hosted card page) + webhook                   |
-| Scheduling     | Workers Cron Triggers (`*/30 * * * *`) → eBay sync             |
+| Scheduling     | Workers Cron Triggers (`*/10 * * * *`) → eBay sync             |
 | Tests          | Vitest (pure logic; no network)                                |
 
 ## Commands
@@ -49,11 +49,16 @@ npm run db:seed:local      # categories, settings, QR10 coupon
 - Types come from `src/types.ts`. Extend that file rather than redeclaring rows.
 - Prices, stock and product content that the owner has edited are protected from
   the eBay sync by the `price_locked`, `stock_locked` and `content_locked` flags.
+- `products.stock` is what the website sells from; `products.ebay_stock` is what
+  the last sync saw on eBay and is recorded even when `stock_locked` is set, so
+  Admin → Stock can show the two side by side.
 - **Coupon codes are stored canonical** — uppercase letters and digits only.
   `normaliseCouponCode` strips punctuation before every lookup, so a stored code
   containing a dash can never be found again. Use `formatCouponCode` to render.
-- A coupon with `product_id` set discounts only that product's basket lines;
-  `eligiblePence` decides what a coupon may discount.
+- `eligiblePence` decides what a coupon may discount. **Coupons discount the
+  whole basket by default.** `product_id` only records which product a QR card
+  was made for (and what its landing page features); the discount is restricted
+  to that product only when `product_only = 1`.
 - **R2 has no spending cap, so the app is the cap.** Every write goes through
   `canStore()` in `src/lib/media.ts`, replaced and deleted images are reclaimed,
   and `/media/*` is edge-cached so reads rarely reach R2. Never add an R2 write
@@ -81,8 +86,12 @@ src/routes/api.ts          health, sync trigger, JSON feeds
 src/routes/admin/          admin panel routes
 src/lib/qr.ts            QR SVG rendering + coupon code generation
 src/lib/media.ts         R2 storage budget, cleanup and usage accounting
-migrations/              D1 schema (0001_init.sql, 0002_product_coupons.sql)
-db/                      seed.sql (reference data) + demo-products.sql
+src/routes/admin/stock.tsx  the Stock screen: website vs eBay quantity per channel
+migrations/              D1 schema (0001 init, 0002 product coupons,
+                         0003 basket-wide coupons, 0004 channel stock)
+db/                      seed.sql (reference data), ebay-catalogue.sql (the 90
+                         imported listings), ebay-category-rules.sql (134 rules),
+                         demo-products.sql (local dev only)
 ```
 
 ## Environment

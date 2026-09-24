@@ -18,7 +18,7 @@ monthly floor cost.
 | **Storefront** | Home, nine categories, product pages, search, basket — server-rendered, mobile-first, works with JavaScript off |
 | **Checkout** | Stripe Checkout (hosted card page), UK shipping address collection, flat-rate delivery with a free-delivery threshold |
 | **Admin panel** | `/admin` — products, stock, categories, orders, coupons, settings, CSV import/export, image uploads |
-| **eBay sync** | Pulls listings from both eBay accounts every 30 minutes: new listings, price and quantity changes, with per-field locks so your manual edits win |
+| **eBay sync** | Pulls listings from both eBay accounts every 10 minutes: new listings, price and quantity changes, with per-field locks so your manual edits win |
 | **QR coupons** | Shop-wide, **per-item** and single-use codes; printable QR card sheets for parcels; a `/qr/<CODE>` landing page that applies the discount and features the item it belongs to |
 
 ## Stack
@@ -29,7 +29,10 @@ monthly floor cost.
 - **KV** — admin sessions, eBay OAuth tokens, rate limits
 - **R2** — product image uploads
 - **Stripe Checkout** — card payments (no card data ever touches this app)
-- **Cron Triggers** — the eBay sync, every 30 minutes
+- **Cron Triggers** — the eBay sync, every 10 minutes
+
+Picking this up fresh? Start with **[HANDOFF.md](HANDOFF.md)** — current state,
+what's left, and the traps.
 
 ## Repository layout
 
@@ -108,8 +111,8 @@ nameservers; the certificate is issued automatically.
 
 1. In the admin panel, open **Coupons**. `QR10` (10% off everything) exists out of
    the box. You can also generate single-use batches, or — the sharper move —
-   open any product and press **Create QR code** to get a readable, item-specific
-   code like `10OFFYORKSHIRETEA` that discounts just that product.
+   open any product and press **Create QR code** to get a card that lands the
+   customer on that product while discounting their whole basket.
 2. Print the card sheet (**Coupons → Print**) and slip one into every parcel.
 3. The card's QR points at `https://27beauty.co.uk/qr/QR10`.
 4. Scanning it opens the landing page, stores the code in the visitor's basket

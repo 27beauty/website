@@ -6,7 +6,7 @@ import { AdminLayout, CsrfField } from '../../ui/admin-layout';
 import { formatPence, penceToInput } from '../../lib/money';
 import { clampInt, parseJsonArray, poundsToPence, uniqueSlug } from '../../lib/util';
 import { randomToken } from '../../lib/crypto';
-import { couponQrUrl, formatCouponCode, productCouponCode, renderQrSvg } from '../../lib/qr';
+import { basketCouponCode, couponQrUrl, formatCouponCode, productCouponCode, renderQrSvg } from '../../lib/qr';
 import { getSetting } from '../../lib/settings';
 import {
   canStore,
@@ -904,9 +904,10 @@ function ProductQrPanel(props: {
     <section class="admin-panel" id="qr">
       <h2>QR discount for this item</h2>
       <p class="muted">
-        Creates a discount code that only applies to <strong>{product.title}</strong>, and a QR card
-        you can print and drop into parcels. Scanning it takes the customer straight to this product
-        with the discount already applied.
+        Creates a discount code and a QR card you can print and drop into parcels. The discount comes
+        off <strong>the customer's whole basket</strong> — scanning the card takes them to{' '}
+        <strong>{product.title}</strong> with the discount already applied, and it keeps working on
+        everything else they add.
       </p>
 
       <form method="post" action={`/admin/products/${product.id}/qr`} class="qr-create-form">
@@ -938,6 +939,12 @@ function ProductQrPanel(props: {
             <span>Single use — the card works once, then stops</span>
           </label>
         </div>
+        <div class="field">
+          <label class="check">
+            <input type="checkbox" name="product_only" value="1" />
+            <span>Restrict to this item only (otherwise it discounts everything)</span>
+          </label>
+        </div>
         <button class="btn btn-accent" type="submit">
           Create QR code
         </button>
@@ -961,6 +968,7 @@ function ProductQrPanel(props: {
                     {coupon.kind === 'percent'
                       ? `${coupon.value}% off`
                       : `${formatPence(coupon.value)} off`}
+                    {coupon.product_only === 1 ? ' this item only' : ' everything'}
                     {coupon.max_redemptions === 1 ? ' · single use' : ''}
                     {coupon.expires_at ? ` · until ${coupon.expires_at.slice(0, 10)}` : ''}
                     {' · used '}
@@ -1003,34 +1011,42 @@ products.post('/:id/qr', async (c) => {
   const percent = clampInt(body.percent, 1, 90, 10);
   const expiresAt = typeof body.expires_at === 'string' && body.expires_at.trim() ? body.expires_at.trim() : null;
   const singleUse = body.single_use === '1';
+  const productOnly = body.product_only === '1';
 
-  // Deliberate, readable code — retried with a suffix only if that exact code
-  // is already taken by another product.
-  let code = productCouponCode(percent, product.title);
+  // A whole-basket card gets a neutral code, because "10OFFYORKSHIRETEA" on a
+  // card that actually discounts everything reads like a restriction. A code
+  // that really is restricted to one item says so in its name.
+  const makeCode = (attempt: number) =>
+    productOnly ? productCouponCode(percent, product.title, attempt) : basketCouponCode(percent, attempt);
+
+  let code = makeCode(0);
   for (let attempt = 0; attempt < 20; attempt++) {
     const clash = await c.env.DB.prepare('SELECT id, product_id FROM coupons WHERE code = ?')
       .bind(code)
       .first<{ id: number; product_id: number | null }>();
     if (!clash) break;
-    if (clash.product_id === product.id) {
+    if (productOnly && clash.product_id === product.id) {
       return c.redirect(
         `/admin/coupons/${clash.id}?msg=` +
           encodeURIComponent(`That code already exists for ${product.title}.`),
         303,
       );
     }
-    code = productCouponCode(percent, product.title, attempt + 1);
+    code = makeCode(attempt + 1);
   }
 
   const res = await c.env.DB.prepare(
-    `INSERT INTO coupons (code, kind, value, description, product_id, max_redemptions, expires_at, batch, active)
-     VALUES (?, 'percent', ?, ?, ?, ?, ?, ?, 1)`,
+    `INSERT INTO coupons (code, kind, value, description, product_id, product_only, max_redemptions, expires_at, batch, active)
+     VALUES (?, 'percent', ?, ?, ?, ?, ?, ?, ?, 1)`,
   )
     .bind(
       code,
       percent,
-      `${percent}% off ${product.title}`,
+      productOnly
+        ? `${percent}% off ${product.title}`
+        : `${percent}% off everything — card printed for ${product.title}`,
       product.id,
+      productOnly ? 1 : 0,
       singleUse ? 1 : null,
       expiresAt,
       `item-${product.id}`,

@@ -836,10 +836,11 @@ async function qrLanding(c: Context<AppBindings>, codeRaw: string) {
         )
       : null;
 
+  const itemOnly = coupon?.product_only === 1;
   const heading = offer
-    ? scopedProduct
+    ? itemOnly && scopedProduct
       ? `🎉 ${offer} ${scopedProduct.title}`
-      : `🎉 Here's your ${offer}`
+      : `🎉 Here's your ${offer} everything`
     : 'Welcome to 27beauty';
 
   return c.html(
@@ -847,7 +848,7 @@ async function qrLanding(c: Context<AppBindings>, codeRaw: string) {
       title={offer ? `Your ${offer} code` : 'Welcome'}
       description={
         offer
-          ? `Scanned a 27beauty QR card? Here's your ${offer}, ready to use.`
+          ? `Scanned a 27beauty QR card? Here's your ${offer}${itemOnly ? '' : ' everything'}, ready to use.`
           : 'Scanned a 27beauty QR card? Here is the shop.'
       }
       categories={categories}
@@ -863,7 +864,9 @@ async function qrLanding(c: Context<AppBindings>, codeRaw: string) {
           ) : null}
           <p>
             {coupon
-              ? "Thanks for shopping with 27beauty. Your discount is saved to this basket — carry on browsing and it comes straight off your total at checkout, no need to remember a thing."
+              ? itemOnly
+                ? 'Thanks for shopping with 27beauty. Your discount is saved to this basket and comes off that item at checkout.'
+                : 'Thanks for shopping with 27beauty. Your discount is saved to this basket and comes off everything you buy — carry on browsing and it comes straight off your total at checkout, no need to remember a thing.'
               : 'Thanks for scanning. Browse the shop below — the same products you found on the marketplace, direct from us.'}
           </p>
           {coupon && coupon.min_spend_pence > 0 ? (
@@ -894,7 +897,7 @@ async function qrLanding(c: Context<AppBindings>, codeRaw: string) {
             <div class="price-row">
               <span class="price price-lg">{formatPence(discountedPence)}</span>
               <span class="price-was">{formatPence(scopedProduct.price_pence)}</span>
-              <span class="pill pill-ok">{offer} with your card</span>
+              <span class="pill pill-ok">{offer} with your card{itemOnly ? '' : ' — on everything'}</span>
             </div>
             {scopedProduct.stock > 0 ? (
               <form method="post" action="/cart/add" class="qty-row">

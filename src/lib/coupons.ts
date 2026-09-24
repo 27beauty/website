@@ -16,12 +16,17 @@ export interface CouponCheck {
 }
 
 /**
- * The part of the basket a coupon may discount. A whole-basket coupon sees
- * everything; a coupon tied to one product only sees that product's lines, so
- * "10% off the Yorkshire Tea" never quietly discounts the kettle as well.
+ * The part of the basket a coupon may discount.
+ *
+ * Almost every coupon here discounts everything — a card that takes 10% off the
+ * whole basket is what gets a marketplace customer to fill one. A coupon is
+ * restricted to a single product only when `product_only` is set, in which case
+ * it sees just that product's lines and never quietly discounts the rest.
+ * `product_id` alone means "this is the product the QR card features", not a
+ * restriction.
  */
 export function eligiblePence(coupon: Coupon, subtotalPence: number, items?: CartItem[]): number {
-  if (!coupon.product_id) return subtotalPence;
+  if (!coupon.product_id || coupon.product_only !== 1) return subtotalPence;
   if (!items) return 0;
   return items
     .filter((item) => item.product.id === coupon.product_id)
@@ -115,7 +120,7 @@ export async function validateCoupon(
 
   // An item-scoped code is valid, just not yet usable, until that item is in
   // the basket — say which item rather than "not recognised".
-  if (coupon.product_id && eligible <= 0 && !options.ignoreMinSpend) {
+  if (coupon.product_id && coupon.product_only === 1 && eligible <= 0 && !options.ignoreMinSpend) {
     const product = await env.DB.prepare('SELECT title FROM products WHERE id = ?')
       .bind(coupon.product_id)
       .first<{ title: string }>();

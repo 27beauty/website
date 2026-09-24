@@ -84,6 +84,8 @@ export interface Product {
   ebay_account: string | null;
   ebay_url: string | null;
   ebay_synced_at: string | null;
+  /** Quantity eBay reported at the last sync — null until a sync has run. */
+  ebay_stock: number | null;
   price_locked: number;
   stock_locked: number;
   content_locked: number;
@@ -105,8 +107,14 @@ export interface Coupon {
   kind: CouponKind;
   value: number;
   description: string | null;
-  /** When set, the discount applies only to this product's basket lines. */
+  /**
+   * The product this coupon was made for. By default it only decides what the
+   * QR landing page features — the discount itself applies to the whole
+   * basket. Set `product_only` to restrict the discount to this product.
+   */
   product_id: number | null;
+  /** 1 = discount only this product's lines; 0 = discount the whole basket. */
+  product_only: number;
   min_spend_pence: number;
   max_redemptions: number | null;
   times_used: number;

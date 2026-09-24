@@ -25,8 +25,11 @@ low, what has gone out of stock, and when the eBay sync last ran.
 **Products** lists everything, searchable and filterable by category, status,
 source (manual or eBay) and low stock.
 
-- **Stock** — edit the number straight in the list and press *Save changes*. One
-  press saves every row you touched.
+- **Stock** — the **Stock** tab is the fastest route: every product in one list,
+  sorted so anything out of stock or running low is at the top, with what eBay
+  last reported beside your own figure so you can see when the two have drifted
+  apart. Edit the numbers and press *Save stock*. You can also edit stock inline
+  on the Products list.
 - **Add a product** — *New product*. Title, price and stock are the only fields
   that really matter; everything else improves the listing.
 - **Photos** — upload straight from your phone's camera roll. Keep them square
@@ -70,11 +73,12 @@ money in Stripe, which is deliberate: only Stripe can move money.
 
 - `QR10` is set up already: 10% off, unlimited use. It is the code on your
   standard card.
-- **A QR for one specific item** — open the product, scroll to *QR discount for
-  this item*, pick a percentage and press **Create QR code**. You get a readable
-  code (`10OFFYORKSHIRETEA`) whose discount applies to that item only, and a card
-  that lands the customer straight on it. Best used when you know what the
-  customer bought: put a cat-treat card in a cat-treat parcel.
+- **A card made from a product** — open the product, scroll to *QR discount for
+  this item*, pick a percentage and press **Create QR code**. The discount comes
+  off the customer's **whole basket**, and the card lands them on that product.
+  Best used when you know what they bought: put a cat-treat card in a cat-treat
+  parcel, and they arrive somewhere familiar with 10% off everything. Tick
+  *Restrict to this item only* if you'd rather discount just that product.
 - **Generate batch** creates a run of single-use codes (say 100 for a print run)
   that each work exactly once, so you can tell which cards converted.
 - **Print** lays a batch out as cards on A4, ready to guillotine and drop into
@@ -83,6 +87,16 @@ money in Stripe, which is deliberate: only Stripe can move money.
 
 The full playbook — how many to print, what to write on them, how to protect your
 margin — is in [qr-coupons.md](qr-coupons.md).
+
+## Categories
+
+**Products → Categories** is where you add, rename, reorder or delete
+categories. Order matters: the first category is the first thing a visitor sees,
+both in the top navigation and on the home page. Beauty leads today because it
+is the biggest range and what the brand is known for — move it if that changes.
+
+A category can only be deleted once nothing is filed under it, which stops a
+stray click hiding products.
 
 ## Settings
 

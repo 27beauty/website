@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { AppBindings, SyncRun } from '../../types';
 import { auth } from './auth';
 import { products } from './products';
+import { stock } from './stock';
 import { categories } from './categories';
 import { media } from './media';
 import { orders } from './orders';
@@ -125,6 +126,9 @@ admin.get('/', async (c) => {
       </div>
 
       <div class="quick-links">
+        <a class="btn btn-secondary" href="/admin/stock">
+          Update stock
+        </a>
         <a class="btn btn-secondary" href="/admin/products/new">
           + New product
         </a>
@@ -160,7 +164,7 @@ admin.get('/', async (c) => {
             <p class="muted">Everything is well stocked.</p>
           )}
           <p style="margin-top:10px;">
-            <a href="/admin/products?lowStock=1">See all low-stock products →</a>
+            <a href="/admin/stock">Update stock across every channel →</a>
           </p>
         </div>
 
@@ -216,6 +220,7 @@ admin.get('/', async (c) => {
 });
 
 admin.route('/products', products);
+admin.route('/stock', stock);
 admin.route('/categories', categories);
 admin.route('/orders', orders);
 admin.route('/coupons', coupons);

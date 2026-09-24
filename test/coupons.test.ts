@@ -55,6 +55,7 @@ const coupon = (over: Partial<Coupon> = {}): Coupon => ({
   value: 10,
   description: null,
   product_id: null,
+  product_only: 0,
   min_spend_pence: 0,
   max_redemptions: null,
   times_used: 0,
@@ -200,25 +201,42 @@ describe('item-scoped coupons', () => {
     expect(eligiblePence(coupon(), 3297, basket)).toBe(3297);
   });
 
-  it('prices an item coupon against that item only', () => {
-    expect(eligiblePence(coupon({ product_id: 5 }), 3297, basket)).toBe(1798);
-    expect(eligiblePence(coupon({ product_id: 3 }), 3297, basket)).toBe(1499);
+  it('discounts the whole basket even when a coupon names a product', () => {
+    // product_id alone only decides what the QR landing page features — the
+    // card still takes its percentage off everything.
+    expect(eligiblePence(coupon({ product_id: 5 }), 3297, basket)).toBe(3297);
   });
 
-  it('gives nothing when the item is not in the basket', () => {
-    expect(eligiblePence(coupon({ product_id: 99 }), 3297, basket)).toBe(0);
+  it('prices an item coupon against that item only when product_only is set', () => {
+    expect(eligiblePence(coupon({ product_id: 5, product_only: 1 }), 3297, basket)).toBe(1798);
+    expect(eligiblePence(coupon({ product_id: 3, product_only: 1 }), 3297, basket)).toBe(1499);
   });
 
-  it('discounts only the scoped item, not the whole basket', async () => {
+  it('gives nothing when a product-only item is not in the basket', () => {
+    expect(eligiblePence(coupon({ product_id: 99, product_only: 1 }), 3297, basket)).toBe(0);
+  });
+
+  it('takes 10% off the whole basket for a product-linked card', async () => {
     const res = await validateCoupon(fakeEnv(coupon({ product_id: 5 })), 'QR10', 3297, null, {
       items: basket,
     });
-    expect(res.discountPence).toBe(180); // 10% of £17.98, not of £32.97
+    expect(res.discountPence).toBe(330); // 10% of the full £32.97
     expect(res.productTitle).toBe('Yorkshire Tea 240 Bags');
   });
 
-  it('names the item the customer still needs to add', async () => {
-    const res = await validateCoupon(fakeEnv(coupon({ product_id: 99 })), 'QR10', 1499, null, {
+  it('discounts only the scoped item when product_only is set', async () => {
+    const res = await validateCoupon(
+      fakeEnv(coupon({ product_id: 5, product_only: 1 })),
+      'QR10',
+      3297,
+      null,
+      { items: basket },
+    );
+    expect(res.discountPence).toBe(180); // 10% of £17.98 only
+  });
+
+  it('names the item the customer still needs to add, for a product-only code', async () => {
+    const res = await validateCoupon(fakeEnv(coupon({ product_id: 99, product_only: 1 })), 'QR10', 1499, null, {
       items: [item(3, 1499, 1)],
     });
     expect(res.coupon).toBeNull();

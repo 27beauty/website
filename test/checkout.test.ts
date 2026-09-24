@@ -35,6 +35,7 @@ function makeProduct(overrides: Partial<Product> = {}): Product {
     ebay_account: null,
     ebay_url: null,
     ebay_synced_at: null,
+  ebay_stock: null,
     price_locked: 0,
     stock_locked: 0,
     content_locked: 0,

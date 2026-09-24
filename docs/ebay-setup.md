@@ -4,7 +4,7 @@ This page is for the shop owner, not a developer. It explains how to get your
 eBay listings showing up automatically on 27beauty.co.uk, so a customer who
 scans the QR card in their parcel finds the same product here.
 
-The website checks eBay automatically **every 30 minutes**. You don't need to
+The website checks eBay automatically **every 10 minutes**. You don't need to
 do anything to trigger it — this guide is a one-off setup, plus how to add a
 second eBay account later and how to read the sync log.
 
@@ -183,3 +183,37 @@ A few things worth knowing about what you'll see there:
   the admin panel and ticked its "locked" box for that field, the eBay sync
   will leave that field alone from then on, and only update the parts you
   haven't locked.
+
+
+## How quickly do new listings appear?
+
+The sync runs **every 10 minutes**, so a listing you create on either eBay
+account shows up on the website within about ten minutes. Pressing **Sync now**
+in Admin → Settings pulls it immediately.
+
+If you want it faster, change `crons` in `wrangler.toml` to `*/5 * * * *` and
+redeploy — that doubles the number of runs and is still nowhere near any free
+limit. Going below five minutes is not worth it: eBay's own search index takes
+a few minutes to show a new listing anyway, so the website would just be asking
+more often for the same answer.
+
+Truly instant would mean eBay pushing a notification to the site the moment a
+listing goes live, rather than the site asking. eBay does support that, but it
+needs a notification subscription set up against a public endpoint and is a
+noticeably bigger piece of work — worth doing only if ten minutes ever proves
+too slow in practice.
+
+## Stock across two channels
+
+The website keeps its own stock figure — the one it sells from — and records
+what eBay last reported alongside it. **Admin → Stock** shows both, and flags
+any product where they disagree.
+
+Unlocked products follow eBay: a sync overwrites the website figure. Tick
+**Lock stock** on a product when you want your own number to stand, for example
+when you hold stock back for the website. Either way the eBay figure keeps
+updating in the background, so the comparison stays honest.
+
+What this does *not* yet do is push your website figure back to eBay — that
+needs sell-mode credentials (a refresh token per account) and is the natural
+next step once the read-only sync is proven.

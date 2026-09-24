@@ -466,3 +466,50 @@ input[inputmode="decimal"], input[type="number"] { font-variant-numeric: tabular
 }
 .usage-fill-warn { background: var(--accent); }
 .usage-fill-bad { background: var(--bad); }
+
+/* Stock screen — the eBay figure is dimmed until it disagrees with ours, so a
+   drift between channels is the only thing that draws the eye. */
+.stock-mismatch { color: var(--bad); font-weight: 700; }
+.table-stock input[type="number"] { max-width: 92px; }
+.stat-tile.stat-bad { border-top-color: var(--bad); }
+.stat-tile.stat-warn { border-top-color: var(--accent); }
+
+/* Compact filter chips. Full-size buttons wrapped onto three rows and pushed
+   the stock table off a phone screen — the table is the point of the page. */
+.chip-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  overflow-x: auto;
+  padding-block: 8px;
+  margin-bottom: 4px;
+  scrollbar-width: thin;
+}
+.chip-row .chip-label {
+  font-size: .8rem;
+  color: var(--ink-faint);
+  flex: none;
+}
+.chip {
+  flex: none;
+  white-space: nowrap;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: .85rem;
+  font-weight: 600;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+}
+.chip:hover { border-color: var(--brand); color: var(--brand); text-decoration: none; }
+.chip[aria-current="page"] { background: var(--brand); border-color: var(--brand); color: #fff; }
+
+/* Three counters across even on a phone: on the stock screen the table matters
+   more than the headline numbers, so they get one tight row, not two. */
+.stat-grid-compact { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stat-grid-compact .stat-tile { padding: 10px 8px; }
+.stat-grid-compact .stat-label { font-size: .68rem; letter-spacing: .02em; }
+.stat-grid-compact .stat-value { font-size: 1.4rem; }
