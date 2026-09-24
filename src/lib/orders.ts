@@ -96,6 +96,81 @@ export async function getOrderWithItems(env: Env, orderId: number): Promise<Orde
   return { ...order, items: results ?? [] };
 }
 
+// ---------------------------------------------------------------------------
+// Parcel2Go booking state (see src/lib/parcel2go.ts for the API side)
+// ---------------------------------------------------------------------------
+
+/**
+ * Atomically claims a paid order for booking, so two clicks can't both pay.
+ * Claimable when never booked, a legacy unpaid draft, a failed attempt, or a
+ * 'booking' claim abandoned for 5+ minutes (the Worker died mid-request).
+ */
+export async function claimParcel2GoBooking(env: Env, orderId: number): Promise<boolean> {
+  const res = await env.DB.prepare(
+    `UPDATE orders
+        SET parcel2go_status = 'booking', parcel2go_error = NULL, updated_at = datetime('now')
+      WHERE id = ? AND status = 'paid'
+        AND (parcel2go_status IS NULL
+             OR parcel2go_status IN ('pushed', 'error')
+             OR (parcel2go_status = 'booking' AND updated_at < datetime('now', '-5 minutes')))`,
+  )
+    .bind(orderId)
+    .run();
+  return (res.meta.changes ?? 0) > 0;
+}
+
+export async function recordParcel2GoOrder(
+  env: Env,
+  orderId: number,
+  p2g: { orderId: string; hash: string; service: string; courier: string; pricePence: number },
+): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE orders
+        SET parcel2go_order_id = ?, parcel2go_hash = ?, parcel2go_service = ?, parcel2go_courier = ?,
+            parcel2go_price_pence = ?, parcel2go_payment_url = NULL, updated_at = datetime('now')
+      WHERE id = ?`,
+  )
+    .bind(p2g.orderId, p2g.hash, p2g.service, p2g.courier, p2g.pricePence, orderId)
+    .run();
+}
+
+export async function markParcel2GoBooked(env: Env, orderId: number): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE orders
+        SET parcel2go_status = 'booked', parcel2go_error = NULL, parcel2go_booked_at = datetime('now'),
+            updated_at = datetime('now')
+      WHERE id = ?`,
+  )
+    .bind(orderId)
+    .run();
+}
+
+export async function markParcel2GoError(env: Env, orderId: number, message: string): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE orders SET parcel2go_status = 'error', parcel2go_error = ?, updated_at = datetime('now') WHERE id = ?`,
+  )
+    .bind(message.slice(0, 1000), orderId)
+    .run();
+}
+
+/** Fills in tracking/carrier from Parcel2Go without overwriting anything the owner typed. */
+export async function recordParcel2GoTracking(
+  env: Env,
+  orderId: number,
+  tracking: string,
+  courier: string | null,
+): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE orders
+        SET tracking_number = COALESCE(NULLIF(tracking_number, ''), ?),
+            carrier = COALESCE(NULLIF(carrier, ''), ?),
+            updated_at = datetime('now')
+      WHERE id = ?`,
+  )
+    .bind(tracking, courier, orderId)
+    .run();
+}
+
 /** Applies stock decrements for an order exactly once, guarded by `stock_applied`. */
 async function applyStockForOrder(env: Env, orderId: number): Promise<void> {
   const guard = await env.DB.prepare(

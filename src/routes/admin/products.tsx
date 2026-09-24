@@ -370,6 +370,10 @@ interface ProductFormValues {
   price_locked: boolean;
   stock_locked: boolean;
   content_locked: boolean;
+  weight_g: string;
+  length_cm: string;
+  width_cm: string;
+  height_cm: string;
 }
 
 function blankForm(): ProductFormValues {
@@ -390,6 +394,10 @@ function blankForm(): ProductFormValues {
     price_locked: false,
     stock_locked: false,
     content_locked: false,
+    weight_g: '',
+    length_cm: '',
+    width_cm: '',
+    height_cm: '',
   };
 }
 
@@ -411,6 +419,10 @@ function formFromProduct(p: ProductWithCategory): ProductFormValues {
     price_locked: p.price_locked === 1,
     stock_locked: p.stock_locked === 1,
     content_locked: p.content_locked === 1,
+    weight_g: p.weight_g !== null ? String(p.weight_g) : '',
+    length_cm: p.length_cm !== null ? String(p.length_cm) : '',
+    width_cm: p.width_cm !== null ? String(p.width_cm) : '',
+    height_cm: p.height_cm !== null ? String(p.height_cm) : '',
   };
 }
 
@@ -538,6 +550,31 @@ function ProductEditor(props: {
         </div>
 
         <fieldset>
+          <legend>Parcel size (for shipping)</legend>
+          <div class="parcel-fields">
+            <div class="field">
+              <label for="weight_g">Weight (g)</label>
+              <input id="weight_g" name="weight_g" type="number" min="1" step="1" value={values.weight_g} placeholder="Default" />
+            </div>
+            <div class="field">
+              <label for="length_cm">Length (cm)</label>
+              <input id="length_cm" name="length_cm" type="number" min="0.1" step="0.1" value={values.length_cm} placeholder="Default" />
+            </div>
+            <div class="field">
+              <label for="width_cm">Width (cm)</label>
+              <input id="width_cm" name="width_cm" type="number" min="0.1" step="0.1" value={values.width_cm} placeholder="Default" />
+            </div>
+            <div class="field">
+              <label for="height_cm">Height (cm)</label>
+              <input id="height_cm" name="height_cm" type="number" min="0.1" step="0.1" value={values.height_cm} placeholder="Default" />
+            </div>
+          </div>
+          <p class="lock-hint">
+            Packed size of one unit. Leave blank to use the default parcel from Settings. The eBay sync never changes these.
+          </p>
+        </fieldset>
+
+        <fieldset>
           <legend>eBay sync locks</legend>
           <div class="admin-grid cols-3">
             <div>
@@ -617,7 +654,21 @@ function readProductForm(body: Record<string, unknown>): ProductFormValues {
     price_locked: str('price_locked') === '1',
     stock_locked: str('stock_locked') === '1',
     content_locked: str('content_locked') === '1',
+    weight_g: str('weight_g').trim(),
+    length_cm: str('length_cm').trim(),
+    width_cm: str('width_cm').trim(),
+    height_cm: str('height_cm').trim(),
   };
+}
+
+/** weight_g, length_cm, width_cm, height_cm — blank or invalid becomes NULL ("use the default"). */
+function parcelColumns(values: ProductFormValues): [number | null, number | null, number | null, number | null] {
+  const positive = (raw: string, max: number, round: (n: number) => number) => {
+    const n = Number(raw);
+    return raw !== '' && Number.isFinite(n) && n > 0 && n <= max ? round(n) : null;
+  };
+  const cm = (raw: string) => positive(raw, 1000, (n) => Math.round(n * 10) / 10);
+  return [positive(values.weight_g, 1_000_000, Math.round), cm(values.length_cm), cm(values.width_cm), cm(values.height_cm)];
 }
 
 products.post('/new', async (c) => {
@@ -651,8 +702,9 @@ products.post('/new', async (c) => {
   const result = await c.env.DB.prepare(
     `INSERT INTO products
       (slug, title, description, category_id, brand, sku, price_pence, compare_at_pence, cost_pence, stock,
-       image_url, images_json, status, featured, source, price_locked, stock_locked, content_locked)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'manual', ?,?,?)`,
+       image_url, images_json, status, featured, source, price_locked, stock_locked, content_locked,
+       weight_g, length_cm, width_cm, height_cm)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'manual', ?,?,?, ?,?,?,?)`,
   )
     .bind(
       slug,
@@ -672,6 +724,7 @@ products.post('/new', async (c) => {
       values.price_locked ? 1 : 0,
       values.stock_locked ? 1 : 0,
       values.content_locked ? 1 : 0,
+      ...parcelColumns(values),
     )
     .run();
   const id = result.meta.last_row_id as number;
@@ -1096,7 +1149,8 @@ products.post('/:id', async (c) => {
     `UPDATE products SET
        title = ?, description = ?, category_id = ?, brand = ?, sku = ?, price_pence = ?, compare_at_pence = ?,
        cost_pence = ?, stock = ?, image_url = ?, images_json = ?, status = ?, featured = ?,
-       price_locked = ?, stock_locked = ?, content_locked = ?, updated_at = datetime('now')
+       price_locked = ?, stock_locked = ?, content_locked = ?,
+       weight_g = ?, length_cm = ?, width_cm = ?, height_cm = ?, updated_at = datetime('now')
      WHERE id = ?`,
   )
     .bind(
@@ -1116,6 +1170,7 @@ products.post('/:id', async (c) => {
       values.price_locked ? 1 : 0,
       values.stock_locked ? 1 : 0,
       values.content_locked ? 1 : 0,
+      ...parcelColumns(values),
       id,
     )
     .run();
@@ -1138,8 +1193,9 @@ products.post('/:id/duplicate', async (c) => {
   const result = await c.env.DB.prepare(
     `INSERT INTO products
       (slug, title, description, category_id, brand, sku, price_pence, compare_at_pence, cost_pence, stock,
-       image_url, images_json, status, featured, source, price_locked, stock_locked, content_locked)
-     VALUES (?,?,?,?,?,?,?,?,?,0,?,?, 'draft', 0, 'manual', ?,?,?)`,
+       image_url, images_json, status, featured, source, price_locked, stock_locked, content_locked,
+       weight_g, length_cm, width_cm, height_cm)
+     VALUES (?,?,?,?,?,?,?,?,?,0,?,?, 'draft', 0, 'manual', ?,?,?, ?,?,?,?)`,
   )
     .bind(
       slug,
@@ -1156,6 +1212,10 @@ products.post('/:id/duplicate', async (c) => {
       p.price_locked,
       p.stock_locked,
       p.content_locked,
+      p.weight_g,
+      p.length_cm,
+      p.width_cm,
+      p.height_cm,
     )
     .run();
   const newId = result.meta.last_row_id as number;

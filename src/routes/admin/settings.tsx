@@ -127,7 +127,7 @@ settings.get('/', async (c) => {
           </div>
           <div class="checkbox-row field">
             <input id="parcel2go_enabled" type="checkbox" name="parcel2go_enabled" value="1" checked={Boolean(s['parcel2go.enabled'])} />
-            <label for="parcel2go_enabled">Push paid orders to Parcel2Go</label>
+            <label for="parcel2go_enabled">Book shipping with Parcel2Go from order pages</label>
           </div>
         </div>
         <div class="field" style="max-width:220px;">
@@ -143,7 +143,8 @@ settings.get('/', async (c) => {
 
         <h3>Parcel2Go default parcel size</h3>
         <p class="muted">
-          Used for every order pushed to Parcel2Go — the site doesn't track per-product weight/dimensions yet.
+          Used for any product without its own parcel size (set on each product's edit page). You can
+          still adjust the parcel on each order before getting quotes.
         </p>
         <div class="admin-grid cols-4">
           <div class="field">

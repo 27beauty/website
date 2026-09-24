@@ -5,7 +5,23 @@ import { AdminLayout, AdminPrintPage, CsrfField } from '../../ui/admin-layout';
 import { formatPence } from '../../lib/money';
 import { clampInt } from '../../lib/util';
 import { getOrderWithItems, type OrderWithItems } from '../../lib/orders';
-import { pushOrderToParcel2Go } from '../../lib/parcel2go';
+import { getSetting } from '../../lib/settings';
+import {
+  bookShipment,
+  fetchTrackingBestEffort,
+  getLabelPdf,
+  getParcelDefaults,
+  getPrepayBalancePence,
+  getQuotes,
+  parcel2goConfigured,
+  parcelForOrder,
+  parcelLinesForOrder,
+  parseParcel,
+  prepayProblemHint,
+  type LabelMedia,
+  type Parcel,
+  type ShippingQuote,
+} from '../../lib/parcel2go';
 
 /**
  * Order management. Listing needs a status + free-text (order number/email)
@@ -56,11 +72,17 @@ function OrderFlow({ order }: { order: Order }) {
       state: order.stock_applied ? 'done' : 'pending',
     });
     steps.push(
-      order.parcel2go_status === 'pushed'
-        ? { label: 'Pushed to Parcel2Go', state: 'done', detail: `Order ${order.parcel2go_order_id}` }
+      order.parcel2go_status === 'booked'
+        ? {
+            label: 'Shipping booked',
+            state: 'done',
+            detail: [order.parcel2go_courier, order.parcel2go_price_pence !== null ? formatPence(order.parcel2go_price_pence) : null]
+              .filter(Boolean)
+              .join(' · '),
+          }
         : order.parcel2go_status === 'error'
-          ? { label: 'Pushed to Parcel2Go', state: 'error', detail: order.parcel2go_error ?? undefined }
-          : { label: 'Pushed to Parcel2Go', state: 'pending', detail: 'Not sent yet' },
+          ? { label: 'Shipping booked', state: 'error', detail: order.parcel2go_error ?? undefined }
+          : { label: 'Shipping booked', state: 'pending', detail: 'Not booked yet' },
     );
     steps.push(
       order.status === 'fulfilled'
@@ -99,24 +121,129 @@ const PAID_STATUSES = ['paid', 'fulfilled', 'refunded'] as const;
 const BASKET_STATUSES = ['pending', 'cancelled'] as const;
 const SHIPPING_STATUSES = ['paid'] as const;
 
-/** Push/Ship control shown per-row in the Orders and Shipping tabs. */
-function ShipCell({ order, csrf, redirect }: { order: Order; csrf: string; redirect: string }) {
+/** Book/label control shown per-row in the Orders and Shipping tabs. */
+function ShipCell({ order }: { order: Order }) {
   if (order.status !== 'paid') return <span class="faint">—</span>;
-  if (order.parcel2go_status === 'pushed' && order.parcel2go_payment_url) {
+  if (order.parcel2go_status === 'booked') {
     return (
-      <a class="btn btn-sm btn-secondary" href={order.parcel2go_payment_url} target="_blank" rel="noreferrer">
-        Ship →
+      <a class="btn btn-sm btn-secondary" href={`/admin/orders/${order.id}/label`} target="_blank">
+        Label ↓
       </a>
     );
   }
   return (
-    <form method="post" action={`/admin/orders/${order.id}/parcel2go`}>
-      <input type="hidden" name="_csrf" value={csrf} />
-      <input type="hidden" name="redirect" value={redirect} />
-      <button class="btn btn-sm btn-accent" type="submit" title={order.parcel2go_error ?? undefined}>
-        {order.parcel2go_status === 'error' ? 'Retry push' : 'Push to ship'}
-      </button>
-    </form>
+    <a class="btn btn-sm btn-accent" href={`/admin/orders/${order.id}/ship`} title={order.parcel2go_error ?? undefined}>
+      {order.parcel2go_status === 'error' ? 'Retry booking' : 'Book →'}
+    </a>
+  );
+}
+
+/** Editable parcel size; submitted by GET so the quotes page URL can be refreshed or bookmarked. */
+function ParcelFields({ parcel }: { parcel: Parcel }) {
+  return (
+    <div class="parcel-fields">
+      <div class="field">
+        <label for="weight_kg">Weight (kg)</label>
+        <input id="weight_kg" name="weight_kg" type="number" step="0.01" min="0.01" value={String(parcel.weightKg)} />
+      </div>
+      <div class="field">
+        <label for="length_cm">Length (cm)</label>
+        <input id="length_cm" name="length_cm" type="number" step="0.1" min="1" value={String(parcel.lengthCm)} />
+      </div>
+      <div class="field">
+        <label for="width_cm">Width (cm)</label>
+        <input id="width_cm" name="width_cm" type="number" step="0.1" min="1" value={String(parcel.widthCm)} />
+      </div>
+      <div class="field">
+        <label for="height_cm">Height (cm)</label>
+        <input id="height_cm" name="height_cm" type="number" step="0.1" min="1" value={String(parcel.heightCm)} />
+      </div>
+    </div>
+  );
+}
+
+function LabelButtons({ orderId }: { orderId: number }) {
+  return (
+    <div class="row">
+      <a class="btn btn-sm" href={`/admin/orders/${orderId}/label?media=Label4X6`} target="_blank">
+        Print label (4×6)
+      </a>
+      <a class="btn btn-sm btn-secondary" href={`/admin/orders/${orderId}/label?media=A4`} target="_blank">
+        Print label (A4)
+      </a>
+    </div>
+  );
+}
+
+/** Shipping box on the order page: book it, or print the label once booked. */
+function ShippingPanel({ order, parcel, enabled }: { order: Order; parcel: Parcel; enabled: boolean }) {
+  if (order.parcel2go_status === 'booked') {
+    return (
+      <div class="admin-panel">
+        <h3>Shipping</h3>
+        <p>
+          <span class="pill pill-ok">booked</span> {order.parcel2go_courier ?? order.parcel2go_service}
+          {order.parcel2go_price_pence !== null ? ` · ${formatPence(order.parcel2go_price_pence)} from PrePay` : ''}
+        </p>
+        <p class="faint">
+          Parcel2Go order {order.parcel2go_order_id}
+          {order.parcel2go_booked_at ? ` · booked ${order.parcel2go_booked_at}` : ''}
+        </p>
+        <LabelButtons orderId={order.id} />
+      </div>
+    );
+  }
+  if (order.status !== 'paid' || !enabled) return null;
+  return (
+    <div class="admin-panel">
+      <h3>Ship with Parcel2Go</h3>
+      {order.parcel2go_status === 'error' ? <p class="notice notice-bad">Last attempt failed: {order.parcel2go_error}</p> : null}
+      <form method="get" action={`/admin/orders/${order.id}/ship`} class="stack">
+        <ParcelFields parcel={parcel} />
+        <p class="field-hint">
+          Worked out from the items' saved sizes, or your default parcel in Settings. Change it here for this order only.
+        </p>
+        <button class="btn btn-accent" type="submit">
+          Get quotes
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function formatDistance(metres: number): string {
+  const miles = metres / 1609.344;
+  return miles < 0.1 ? `${Math.round(metres)} m` : `${miles.toFixed(1)} mi`;
+}
+
+function formatDay(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Europe/London' });
+}
+
+function QuoteOption({ quote, index, checked }: { quote: ShippingQuote; index: number; checked: boolean }) {
+  const dropOff = quote.collectionType.toLowerCase().includes('drop');
+  const collectDay = formatDay(quote.collectionDate);
+  const deliverDay = formatDay(quote.estimatedDelivery);
+  return (
+    <label class="quote-option">
+      <input type="radio" name="pick" value={String(index)} checked={checked} required />
+      <span class="quote-main">
+        <span class="quote-name">
+          {quote.courier ? `${quote.courier} — ` : ''}
+          {quote.name}
+        </span>
+        <span class="quote-meta">
+          {dropOff
+            ? `Drop off${quote.dropShopDistanceM !== null ? ` · nearest shop ${formatDistance(quote.dropShopDistanceM)}` : ''}`
+            : `Collected from you${collectDay ? ` ${collectDay}` : ''}`}
+          {deliverDay ? ` · arrives ~${deliverDay}` : ''}
+        </span>
+      </span>
+      <span class="quote-price">{formatPence(quote.pricePence)}</span>
+    </label>
   );
 }
 
@@ -129,7 +256,6 @@ orders.get('/', async (c) => {
     view === 'baskets' ? BASKET_STATUSES : view === 'shipping' ? SHIPPING_STATUSES : PAID_STATUSES;
   const status = query.status && allowedStatuses.includes(query.status) ? query.status : undefined;
   const search = query.q?.trim();
-  const backHref = `/admin/orders?${new URLSearchParams(query as Record<string, string>).toString()}`;
 
   const where: string[] = [`status IN (${allowedStatuses.map(() => '?').join(',')})`];
   const params: unknown[] = [...allowedStatuses];
@@ -193,8 +319,9 @@ orders.get('/', async (c) => {
       ) : null}
       {view === 'shipping' ? (
         <p class="muted" style="margin-top:-8px;margin-bottom:16px;">
-          Paid orders not yet fulfilled. "Push to ship" sends the order to Parcel2Go — click "Ship →"
-          to open the booking and pay for the label. An order drops off this list once marked fulfilled.
+          Paid orders not yet fulfilled. "Book →" shows Parcel2Go quotes for the parcel — pick a courier
+          and it's paid from your PrePay balance, then "Label ↓" prints the label. An order drops off
+          this list once marked fulfilled.
         </p>
       ) : null}
 
@@ -247,7 +374,7 @@ orders.get('/', async (c) => {
                   </td>
                   <td class="num">{formatPence(o.total_pence)}</td>
                   <td>
-                    <ShipCell order={o} csrf={admin.csrf} redirect={backHref} />
+                    <ShipCell order={o} />
                     {o.parcel2go_status === 'error' ? (
                       <div class="faint small" style="max-width:220px;">
                         {o.parcel2go_error}
@@ -359,7 +486,7 @@ orders.get('/', async (c) => {
                   <td class="num">{formatPence(o.total_pence)}</td>
                   <td class="faint col-optional">{o.coupon_code ?? '—'}</td>
                   <td>
-                    <ShipCell order={o} csrf={admin.csrf} redirect={backHref} />
+                    <ShipCell order={o} />
                   </td>
                 </tr>
               ))}
@@ -468,6 +595,12 @@ orders.get('/:id', async (c) => {
   const { order, items } = loaded;
   const shipping = parseShipping(order.shipping_json);
   const flash = flashOf(c);
+  const [lines, defaults, p2gEnabled] = await Promise.all([
+    parcelLinesForOrder(c.env, items),
+    getParcelDefaults(c.env),
+    getSetting<boolean>(c.env, 'parcel2go.enabled', false),
+  ]);
+  const parcel = parcelForOrder(lines, defaults);
 
   return c.html(
     <AdminLayout title={`Order ${order.order_number}`} active="orders" admin={admin} msg={flash.msg} err={flash.err}>
@@ -581,30 +714,9 @@ orders.get('/:id', async (c) => {
               </p>
             ) : null}
 
-            <h3>Parcel2Go</h3>
-            {order.parcel2go_status === 'pushed' ? (
-              <p>
-                Pushed as order <strong>{order.parcel2go_order_id}</strong>.{' '}
-                {order.parcel2go_payment_url ? (
-                  <a href={order.parcel2go_payment_url} target="_blank" rel="noreferrer">
-                    Book shipping on Parcel2Go →
-                  </a>
-                ) : (
-                  'No payment link returned.'
-                )}
-              </p>
-            ) : order.parcel2go_status === 'error' ? (
-              <p class="notice notice-bad">Push failed: {order.parcel2go_error}</p>
-            ) : (
-              <p class="muted">Not pushed yet.</p>
-            )}
-            <form method="post" action={`/admin/orders/${id}/parcel2go`}>
-              <CsrfField token={admin.csrf} />
-              <button class="btn btn-sm btn-secondary" type="submit">
-                {order.parcel2go_status === 'pushed' ? 'Push again' : 'Push to Parcel2Go'}
-              </button>
-            </form>
           </div>
+
+          <ShippingPanel order={order} parcel={parcel} enabled={p2gEnabled} />
 
           <div class="admin-panel">
             <h3>Actions</h3>
@@ -666,38 +778,170 @@ orders.get('/:id', async (c) => {
   );
 });
 
-/** Only ever sends the admin back into /admin/orders — never an open redirect. */
-function safeOrdersRedirect(raw: unknown, fallback: string): string {
-  return typeof raw === 'string' && raw.startsWith('/admin/orders') ? raw : fallback;
-}
+/** Quotes for the parcel, then pick one and pay from PrePay. */
+orders.get('/:id/ship', async (c) => {
+  const admin = getAdmin(c);
+  const id = Number(c.req.param('id'));
+  const loaded = await loadOrder(c.env, id);
+  if (!loaded) return c.text('Not found', 404);
+  const { order, items } = loaded;
+  if (order.parcel2go_status === 'booked') {
+    return c.redirect(`/admin/orders/${id}?msg=${encodeURIComponent('Shipping is already booked for this order.')}`, 303);
+  }
+  if (order.status !== 'paid') {
+    return c.redirect(`/admin/orders/${id}?err=${encodeURIComponent('Only paid, unfulfilled orders can be booked.')}`, 303);
+  }
+  if (!parcel2goConfigured(c.env) || !(await getSetting<boolean>(c.env, 'parcel2go.enabled', false))) {
+    return c.redirect(
+      `/admin/orders/${id}?err=${encodeURIComponent('Parcel2Go is switched off or has no credentials — see Settings.')}`,
+      303,
+    );
+  }
 
-orders.post('/:id/parcel2go', async (c) => {
+  const suggested = parcelForOrder(await parcelLinesForOrder(c.env, items), await getParcelDefaults(c.env));
+  const parcel = parseParcel(c.req.query(), suggested);
+  const flash = flashOf(c);
+
+  let quotes: ShippingQuote[] = [];
+  let quoteError: string | null = null;
+  let balancePence: number | null = null;
+  let balanceError: string | null = null;
+  await Promise.all([
+    getQuotes(c.env, order, parcel).then(
+      (q) => (quotes = q),
+      (err) => (quoteError = err instanceof Error ? err.message : String(err)),
+    ),
+    getPrepayBalancePence(c.env).then(
+      (b) => (balancePence = b),
+      (err) => (balanceError = err instanceof Error ? err.message : String(err)),
+    ),
+  ]);
+
+  return c.html(
+    <AdminLayout title={`Ship ${order.order_number}`} active="orders" admin={admin} msg={flash.msg} err={flash.err}>
+      <div class="admin-head">
+        <div>
+          <h1>Ship order {order.order_number}</h1>
+          <p class="muted">
+            {items.reduce((n, it) => n + it.quantity, 0)} item(s) to {order.customer_name ?? 'customer'}
+          </p>
+        </div>
+        <a class="btn btn-secondary" href={`/admin/orders/${id}`}>
+          ← Back to order
+        </a>
+      </div>
+
+      <form method="get" action={`/admin/orders/${id}/ship`} class="admin-panel stack">
+        <h3>Parcel</h3>
+        <ParcelFields parcel={parcel} />
+        <button class="btn btn-secondary btn-sm" type="submit">
+          Update quotes
+        </button>
+      </form>
+
+      <div class="admin-panel">
+        <h3>Choose a service</h3>
+        {balancePence !== null ? (
+          <p class="muted">PrePay balance: <strong>{formatPence(balancePence)}</strong></p>
+        ) : (
+          <p class="notice notice-warn">
+            Couldn't read your PrePay balance: {prepayProblemHint(balanceError ?? '')}
+            <span class="faint small"> ({balanceError})</span>
+          </p>
+        )}
+        {quoteError ? (
+          <p class="notice notice-bad">Parcel2Go couldn't quote this parcel: {quoteError}</p>
+        ) : !quotes.length ? (
+          <p class="muted">No services available for this parcel — try a smaller size or lighter weight.</p>
+        ) : (
+          <form method="post" action={`/admin/orders/${id}/book`} class="stack">
+            <CsrfField token={admin.csrf} />
+            <input type="hidden" name="weight_kg" value={String(parcel.weightKg)} />
+            <input type="hidden" name="length_cm" value={String(parcel.lengthCm)} />
+            <input type="hidden" name="width_cm" value={String(parcel.widthCm)} />
+            <input type="hidden" name="height_cm" value={String(parcel.heightCm)} />
+            {quotes.map((q, i) => (
+              <>
+                <input type="hidden" name={`q${i}_service`} value={q.service} />
+                <input type="hidden" name={`q${i}_courier`} value={q.courier || q.name} />
+                <input type="hidden" name={`q${i}_price`} value={String(q.pricePence)} />
+                <input type="hidden" name={`q${i}_date`} value={q.collectionDate ?? ''} />
+              </>
+            ))}
+            <div class="quote-list">
+              {quotes.map((q, i) => (
+                <QuoteOption quote={q} index={i} checked={i === 0} />
+              ))}
+            </div>
+            <p class="field-hint">Cheapest first. Nothing is paid until you press the button.</p>
+            <button class="btn btn-accent" type="submit">
+              Book &amp; pay from PrePay
+            </button>
+          </form>
+        )}
+      </div>
+    </AdminLayout>,
+  );
+});
+
+orders.post('/:id/book', async (c) => {
   const id = Number(c.req.param('id'));
   const body = await c.req.parseBody();
   if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
     return c.redirect(`/admin/orders/${id}?err=` + encodeURIComponent('Your session expired — please try again.'), 303);
   }
-  const back = safeOrdersRedirect(body.redirect, `/admin/orders/${id}`);
-  const sep = back.includes('?') ? '&' : '?';
+  const loaded = await loadOrder(c.env, id);
+  if (!loaded) return c.text('Not found', 404);
+  const { order, items } = loaded;
+
+  const pick = clampInt(body.pick, 0, 200, -1);
+  const field = (name: string) => (typeof body[`q${pick}_${name}`] === 'string' ? (body[`q${pick}_${name}`] as string) : '');
+  const service = field('service');
+  const quotedPence = clampInt(field('price'), 1, 10_000_00, 0);
+  if (pick < 0 || !service || !quotedPence) {
+    return c.redirect(`/admin/orders/${id}/ship?err=` + encodeURIComponent('Pick a service first.'), 303);
+  }
+
+  const suggested = parcelForOrder(await parcelLinesForOrder(c.env, items), await getParcelDefaults(c.env));
+  const result = await bookShipment(c.env, order, {
+    service,
+    courier: field('courier') || service,
+    collectionDate: field('date') || null,
+    quotedPence,
+    parcel: parseParcel(body, suggested),
+  });
+
+  if (!result.ok) {
+    return c.redirect(`/admin/orders/${id}?err=` + encodeURIComponent(`Parcel2Go: ${result.error}`), 303);
+  }
+  const msg = result.trackingNumber
+    ? `Booked and paid. Tracking ${result.trackingNumber} — print the label below.`
+    : 'Booked and paid — print the label below. Tracking appears once Parcel2Go issues it.';
+  return c.redirect(`/admin/orders/${id}?msg=` + encodeURIComponent(msg), 303);
+});
+
+/** Streams the label PDF from Parcel2Go; nothing is stored. */
+orders.get('/:id/label', async (c) => {
+  const id = Number(c.req.param('id'));
   const order = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first<Order>();
-  if (!order) return c.redirect('/admin/orders', 303);
+  if (!order) return c.text('Not found', 404);
+  const media: LabelMedia = c.req.query('media') === 'A4' ? 'A4' : 'Label4X6';
 
   try {
-    const result = await pushOrderToParcel2Go(c.env, order);
-    await c.env.DB.prepare(
-      `UPDATE orders
-         SET parcel2go_order_id = ?, parcel2go_payment_url = ?, parcel2go_status = 'pushed', parcel2go_error = NULL
-       WHERE id = ?`,
-    )
-      .bind(result.orderId, result.paymentUrl, id)
-      .run();
-    return c.redirect(`${back}${sep}msg=` + encodeURIComponent('Pushed to Parcel2Go.'), 303);
+    const pdf = await getLabelPdf(c.env, order, media);
+    if (!order.tracking_number && order.parcel2go_order_id && order.parcel2go_hash) {
+      await fetchTrackingBestEffort(c.env, order.id, order.parcel2go_order_id, order.parcel2go_hash, order.parcel2go_courier);
+    }
+    return new Response(pdf, {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `inline; filename="label-${order.order_number}.pdf"`,
+        'Cache-Control': 'private, no-store',
+      },
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await c.env.DB.prepare(`UPDATE orders SET parcel2go_status = 'error', parcel2go_error = ? WHERE id = ?`)
-      .bind(message.slice(0, 1000), id)
-      .run();
-    return c.redirect(`${back}${sep}err=` + encodeURIComponent(`Parcel2Go: ${message}`), 303);
+    return c.redirect(`/admin/orders/${id}?err=` + encodeURIComponent(`Label: ${message}`), 303);
   }
 });
 

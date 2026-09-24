@@ -1,11 +1,9 @@
 import { Hono } from 'hono';
 import type Stripe from 'stripe';
-import type { AppBindings, Order, ShippingAddress } from '../types';
+import type { AppBindings, ShippingAddress } from '../types';
 import { getStripeClient, getWebhookSecret } from '../lib/stripe';
 import { markOrderCancelled, markOrderPaid } from '../lib/orders';
 import { findCoupon, recordRedemption } from '../lib/coupons';
-import { pushOrderToParcel2Go } from '../lib/parcel2go';
-import { getSetting } from '../lib/settings';
 import { updateEbayStock } from '../lib/ebay/inventory';
 import type { EbayAccount } from '../types';
 
@@ -74,8 +72,9 @@ async function handlePaidSession(env: AppBindings['Bindings'], session: Stripe.C
     }
   }
 
+  // Shipping is booked by the owner from the admin order page (quote → pick a
+  // courier → pay from Parcel2Go PrePay), so nothing is sent to Parcel2Go here.
   if (transitioned && order) {
-    await pushOrderToParcel2GoBestEffort(env, order.id);
     await pushStockToEbayBestEffort(env, order.id);
   }
 }
@@ -121,38 +120,6 @@ async function pushStockToEbayBestEffort(env: AppBindings['Bindings'], orderId: 
     } catch (err) {
       console.error(`eBay stock push (${seller}) failed:`, err instanceof Error ? err.message : err);
     }
-  }
-}
-
-/**
- * Pushes the order to Parcel2Go so it "comes through" there ready to book.
- * Never lets a Parcel2Go failure affect the payment flow — the order is
- * already paid regardless; a failure here just leaves parcel2go_status as
- * 'error' for the owner to notice and push manually from the admin panel.
- */
-async function pushOrderToParcel2GoBestEffort(env: AppBindings['Bindings'], orderId: number) {
-  const enabled = await getSetting<boolean>(env, 'parcel2go.enabled', false);
-  if (!enabled || !env.PARCEL2GO_CLIENT_ID || !env.PARCEL2GO_CLIENT_SECRET) return;
-
-  const order = await env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(orderId).first<Order>();
-  if (!order) return;
-
-  try {
-    const result = await pushOrderToParcel2Go(env, order);
-    await env.DB.prepare(
-      `UPDATE orders
-         SET parcel2go_order_id = ?, parcel2go_payment_url = ?, parcel2go_status = 'pushed', parcel2go_error = NULL
-       WHERE id = ?`,
-    )
-      .bind(result.orderId, result.paymentUrl, orderId)
-      .run();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await env.DB.prepare(
-      `UPDATE orders SET parcel2go_status = 'error', parcel2go_error = ? WHERE id = ?`,
-    )
-      .bind(message.slice(0, 1000), orderId)
-      .run();
   }
 }
 

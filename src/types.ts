@@ -89,6 +89,11 @@ export interface Product {
   price_locked: number;
   stock_locked: number;
   content_locked: number;
+  /** Parcel size for shipping; null = use the default from Settings. */
+  weight_g: number | null;
+  length_cm: number | null;
+  width_cm: number | null;
+  height_cm: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -151,8 +156,14 @@ export interface Order {
   stock_applied: number;
   parcel2go_order_id: string | null;
   parcel2go_payment_url: string | null;
+  /** pushed (legacy unpaid draft) | booking | booked | error */
   parcel2go_status: string | null;
   parcel2go_error: string | null;
+  parcel2go_hash: string | null;
+  parcel2go_service: string | null;
+  parcel2go_courier: string | null;
+  parcel2go_price_pence: number | null;
+  parcel2go_booked_at: string | null;
   recovery_url: string | null;
   created_at: string;
   updated_at: string;

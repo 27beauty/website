@@ -13,6 +13,7 @@ import { getAdmin, requireAdmin } from '../../lib/admin-auth';
 import { AdminLayout } from '../../ui/admin-layout';
 import { formatPence } from '../../lib/money';
 import { getSetting } from '../../lib/settings';
+import { getPrepayBalancePence, parcel2goConfigured, prepayProblemHint } from '../../lib/parcel2go';
 
 /** Admin panel: auth, dashboard, products, orders, coupons, settings, sync. */
 export const admin = new Hono<AppBindings>();
@@ -65,10 +66,12 @@ admin.get('/', async (c) => {
     ).all<{ title: string; stock: number; id: number }>(),
     c.env.DB.prepare(
       `SELECT
-         COALESCE(SUM(CASE WHEN parcel2go_status = 'pushed' THEN 1 ELSE 0 END), 0) AS pushed,
-         COALESCE(SUM(CASE WHEN parcel2go_status = 'error' THEN 1 ELSE 0 END), 0) AS errored
-       FROM orders WHERE status IN ('paid', 'fulfilled', 'refunded')`,
-    ).first<{ pushed: number; errored: number }>(),
+         COALESCE(SUM(CASE WHEN status = 'paid' AND COALESCE(parcel2go_status, '') != 'booked' THEN 1 ELSE 0 END), 0) AS to_book,
+         COALESCE(SUM(CASE WHEN parcel2go_status = 'booked' AND booked_today THEN 1 ELSE 0 END), 0) AS booked_today,
+         COALESCE(SUM(CASE WHEN status = 'paid' AND parcel2go_status = 'error' THEN 1 ELSE 0 END), 0) AS errored
+       FROM (SELECT status, parcel2go_status, date(parcel2go_booked_at) = date('now') AS booked_today
+               FROM orders WHERE status IN ('paid', 'fulfilled', 'refunded'))`,
+    ).first<{ to_book: number; booked_today: number; errored: number }>(),
     getSetting<boolean>(c.env, 'parcel2go.enabled', false),
     c.env.DB.prepare("SELECT COUNT(*) AS n FROM b2b_inquiries WHERE status = 'new'").first<{ n: number }>(),
   ]);
@@ -77,8 +80,17 @@ admin.get('/', async (c) => {
   const stats: OrderStats = orderStats ?? { today_revenue: 0, today_orders: 0, revenue_30d: 0, orders_30d: 0 };
   const pStats: ProductStats = productStats ?? { active_total: 0, out_of_stock: 0, low_stock: 0 };
   const awaiting = awaitingRow?.n ?? 0;
-  const p2g = p2gStats ?? { pushed: 0, errored: 0 };
-  const p2gConfigured = Boolean(c.env.PARCEL2GO_CLIENT_ID && c.env.PARCEL2GO_CLIENT_SECRET);
+  const p2g = p2gStats ?? { to_book: 0, booked_today: 0, errored: 0 };
+  const p2gConfigured = parcel2goConfigured(c.env);
+  // Also the live check that the API client may pay from PrePay: a 403 here
+  // means Parcel2Go hasn't enabled PrePay payments for it yet.
+  let prepay: { pence: number } | { error: string } | null = null;
+  if (p2gEnabled && p2gConfigured) {
+    prepay = await getPrepayBalancePence(c.env).then(
+      (pence) => ({ pence }),
+      (err) => ({ error: err instanceof Error ? err.message : String(err) }),
+    );
+  }
 
   return c.html(
     <AdminLayout title="Dashboard" active="dashboard" admin={session} msg={flash.msg} err={flash.err}>
@@ -198,18 +210,23 @@ admin.get('/', async (c) => {
               {!p2gEnabled ? 'disabled' : !p2gConfigured ? 'missing credentials' : 'active'}
             </span>
           </p>
-          <p class="muted">
-            {p2g.pushed} pushed · {p2g.errored} failed
-          </p>
-          {p2g.errored > 0 ? (
-            <p class="faint">
-              <a href="/admin/orders?view=shipping">Check failed pushes →</a>
+          {prepay && 'pence' in prepay ? (
+            <p>
+              PrePay balance: <strong>{formatPence(prepay.pence)}</strong>
+            </p>
+          ) : prepay ? (
+            <p class="notice notice-warn">
+              Can't read PrePay balance: {prepayProblemHint(prepay.error)}
             </p>
           ) : null}
-          <p class="field-hint" style="margin-top:10px;">
-            Pushed orders don't show up if you log into parcel2go.com — they're app-level bookings
-            only reachable via the link on each order's admin page.
+          <p class="muted">
+            {p2g.to_book} to book · {p2g.booked_today} booked today{p2g.errored > 0 ? ` · ${p2g.errored} failed` : ''}
           </p>
+          {p2g.to_book > 0 ? (
+            <p class="faint">
+              <a href="/admin/orders?view=shipping">Book shipping →</a>
+            </p>
+          ) : null}
           <p style="margin-top:10px;">
             <a href="/admin/settings">Manage Parcel2Go →</a>
           </p>

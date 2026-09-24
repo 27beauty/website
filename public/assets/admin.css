@@ -118,6 +118,22 @@ body.admin-page {
 .order-flow .flow-label { font-weight: 600; font-size: .92rem; }
 .order-flow .flow-detail { font-size: .82rem; color: var(--ink-faint); }
 
+/* ---------- Parcel2Go: parcel size + quote picker ---------- */
+.parcel-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (min-width: 640px) { .parcel-fields { grid-template-columns: repeat(4, 1fr); } }
+.quote-list { display: flex; flex-direction: column; gap: 8px; }
+.quote-option {
+  display: flex; align-items: center; gap: 12px; min-height: var(--tap);
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface); cursor: pointer;
+}
+.quote-option:has(input:checked) { border-color: var(--brand); background: var(--brand-soft); box-shadow: 0 0 0 1px var(--brand); }
+.quote-option input { flex: none; width: 20px; height: 20px; margin: 0; accent-color: var(--brand); }
+.quote-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.quote-name { font-weight: 600; font-size: .95rem; }
+.quote-meta { font-size: .82rem; color: var(--ink-faint); }
+.quote-price { flex: none; font-weight: 700; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+
 /* ---------- flash messages: impossible to miss, dismissible with no JS ---------- */
 .flash-toggle { display: none; }
 .flash-notice {
