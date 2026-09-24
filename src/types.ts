@@ -32,6 +32,8 @@ export interface Env {
   PARCEL2GO_CLIENT_SECRET?: string;
   /** eBay "RuName" for the seller consent redirect (developer portal → User Tokens). Not secret. */
   EBAY_RUNAME?: string;
+  /** Verification token for eBay's Marketplace Account Deletion endpoint (32–80 chars). */
+  EBAY_DELETION_TOKEN?: string;
   /** Amazon SP-API (Login with Amazon) app credentials and the seller's self-authorised refresh token. */
   AMAZON_LWA_CLIENT_ID?: string;
   AMAZON_LWA_CLIENT_SECRET?: string;

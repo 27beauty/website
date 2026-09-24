@@ -109,3 +109,15 @@ describe('stored eBay tokens', () => {
     expect(await decryptSecret(`${enc.slice(0, -2)}AA`, 'key-one-0123456789')).toBeNull();
   });
 });
+
+describe('eBay account-deletion challenge', () => {
+  it("matches eBay's documented formula: hex SHA-256 of code + token + endpoint", async () => {
+    const { challengeResponse } = await import('../src/lib/ebay/deletion');
+    const r = await challengeResponse('abc', 'token', 'https://x.test/e');
+    const expected = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('abctokenhttps://x.test/e')))]
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+    expect(r).toBe(expected);
+    expect(r).toMatch(/^[0-9a-f]{64}$/);
+  });
+});

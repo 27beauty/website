@@ -4,6 +4,7 @@ import { secretsMatch } from '../lib/crypto';
 import { clampInt } from '../lib/util';
 import { runEbaySync } from '../lib/ebay/sync';
 import { parseBeacon, recordBeacon } from '../lib/analytics';
+import { DELETION_ENDPOINT_PATH, challengeResponse } from '../lib/ebay/deletion';
 
 /** Machine endpoints: eBay sync trigger, health check, product JSON feed. */
 export const api = new Hono<AppBindings>();
@@ -21,6 +22,27 @@ api.post('/beacon', async (c) => {
       recordBeacon(c.env, beacon).catch((err) => console.error('beacon write failed', err instanceof Error ? err.message : err)),
     );
   }
+  return c.body(null, 204);
+});
+
+/**
+ * eBay Marketplace Account Deletion (required before eBay enables a
+ * production keyset). GET answers eBay's ownership challenge; POST
+ * acknowledges a closure notice — no eBay buyer data is stored here.
+ */
+api.get('/ebay/account-deletion', async (c) => {
+  const code = c.req.query('challenge_code');
+  const token = c.env.EBAY_DELETION_TOKEN;
+  if (!code || !token) return c.json({ error: 'not configured' }, 400);
+  const endpoint = `${c.env.SITE_URL}${DELETION_ENDPOINT_PATH}`;
+  return c.json({ challengeResponse: await challengeResponse(code, token, endpoint) });
+});
+
+api.post('/ebay/account-deletion', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { notification?: { data?: { username?: string } } } | null;
+  const username = body?.notification?.data?.username;
+  // Only a username is logged — enough to notice if it's one of our own shops.
+  console.log('eBay account deletion notice', username ? `for ${username}` : '(no username)');
   return c.body(null, 204);
 });
 
