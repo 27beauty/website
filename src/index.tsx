@@ -56,6 +56,16 @@ app.use('*', async (c, next) => {
 app.use('*', pageViewMiddleware);
 
 /**
+ * Uploaded images are served from the shop's own domain, so an SVG with a
+ * script in it could otherwise run as the site if opened directly. These
+ * headers let images display and nothing else run.
+ */
+function lockDownMedia(headers: Headers): void {
+  headers.set('content-security-policy', "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox");
+  headers.set('x-content-type-options', 'nosniff');
+}
+
+/**
  * Product images uploaded through the admin panel live in R2 and are served
  * from here so the storefront can link to them directly.
  */
@@ -68,15 +78,16 @@ app.get('/media/*', async (c) => {
   // Serve from the edge cache whenever possible: every miss is a billable R2
   // read, and product images are requested far more often than they change.
   // This is what keeps read operations nowhere near the free-tier ceiling.
+  // Cached without the query string, so ?anything can't force a fresh R2 read.
+  const cacheKey = new Request(new URL(c.req.url).origin + new URL(c.req.url).pathname, { method: 'GET' });
   const cache = caches.default;
-  const cached = await cache.match(c.req.raw);
+  const cached = await cache.match(cacheKey);
   if (cached) {
     // A cached Response has immutable headers, so hand back a copy that later
     // middleware is still allowed to touch.
-    return new Response(cached.body, {
-      status: cached.status,
-      headers: new Headers(cached.headers),
-    });
+    const headers = new Headers(cached.headers);
+    lockDownMedia(headers);
+    return new Response(cached.body, { status: cached.status, headers });
   }
 
   const object = await c.env.MEDIA.get(key);
@@ -87,12 +98,13 @@ app.get('/media/*', async (c) => {
   headers.set('etag', object.httpEtag);
   // Keys are random per upload and never rewritten, so this can be immutable.
   headers.set('cache-control', 'public, max-age=31536000, immutable');
+  lockDownMedia(headers);
 
   // Read the object once and build two independent responses: sharing a single
   // R2 stream between the cache and the client cancels one of them. Uploads are
   // capped at a few MB (src/lib/media.ts), so buffering here is safe.
   const bytes = await object.arrayBuffer();
-  c.executionCtx.waitUntil(cache.put(c.req.raw, new Response(bytes, { headers: new Headers(headers) })));
+  c.executionCtx.waitUntil(cache.put(cacheKey, new Response(bytes, { headers: new Headers(headers) })));
   return new Response(bytes, { headers });
 });
 

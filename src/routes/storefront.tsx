@@ -534,7 +534,7 @@ storefront.get('/product/:slug', async (c) => {
           {product.description ? (
             <div class="stack">
               <h2>Description</h2>
-              <p>{product.description}</p>
+              <p class="product-description">{product.description}</p>
             </div>
           ) : null}
 

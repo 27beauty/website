@@ -51,7 +51,7 @@ export type TrafficSource =
 export type Device = 'mobile' | 'tablet' | 'desktop';
 
 /** Raw events older than this are deleted by the daily cron. */
-export const RETENTION_DAYS = 180;
+export const RETENTION_DAYS = 730;
 
 const BOT_PATTERN =
   /bot|crawl|spider|slurp|scrape|fetch|preview|facebookexternalhit|embedly|whatsapp|telegram|skype|discord|headless|lighthouse|pagespeed|gtmetrix|pingdom|uptime|monitor|curl|wget|python|java\/|go-http|okhttp|axios|node-fetch|httpclient|postman|insomnia|^mozilla\/5\.0$/i;

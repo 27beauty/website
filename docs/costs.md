@@ -23,22 +23,24 @@ instead.
 
 | Risk | Guardrail | Where |
 | --- | --- | --- |
-| Filling R2 with images | A self-imposed storage budget, default **1 GB** of the 10 GB free allowance. Uploads that would cross it are refused with a clear message. | `src/lib/media.ts` |
-| A huge single file | Uploads capped at **5 MB** each | `src/lib/media.ts` |
+| Filling R2 with images | A storage budget set to the **10 GB** free allowance (decimal GB, the smaller reading). Uploads that would cross it are refused with a clear message. | `src/lib/media.ts` |
+| A huge single file | Uploads capped at **50 MB** each (the Worker's 128 MB memory is the real ceiling) | `src/lib/media.ts` |
+| A stolen admin login uploading in a loop | At most **30,000 uploads a day**, which keeps R2 writes inside the free 1,000,000 a month | `src/lib/media.ts` |
 | Replaced photos piling up | Replacing a product photo **deletes the old object** and gives the bytes back | `src/routes/admin/products.tsx` |
 | Deleted products leaving orphans | Deleting a product **deletes all its stored images** | `src/lib/media.ts` |
 | Image views costing read operations | `/media/*` is served from the **edge cache**; only a cache miss reaches R2, and objects are immutable with a one-year TTL | `src/index.tsx` |
-| Raising the limit by accident | The limit itself **cannot be set above 8 GB** | `src/routes/admin/settings.tsx` |
+| Raising the limit by accident | The limit itself **cannot be set above the free 10 GB** | `src/routes/admin/settings.tsx` |
+| Scripts inside an uploaded SVG | `/media/*` responses carry a locked-down CSP (`sandbox`) and `nosniff`, and ignore query strings when caching | `src/index.tsx` |
 | Losing track | **Admin → Settings → Image storage** shows a meter, and "Recount from R2" re-checks reality | `/admin/settings` |
 
-Nine tests cover this (`test/media.test.ts`), including the refusal path.
+Tests in `test/media.test.ts` cover every guardrail, including the refusal paths.
 
 ## Free allowances, and how close this shop gets
 
 | Service | Free allowance (verify current) | What the shop uses |
 | --- | --- | --- |
 | **Workers** | 100,000 requests/day | Every page view. A QR-card shop does not approach this; beyond it the free plan throttles rather than charges |
-| **R2 storage** | 10 GB-month | Capped at 1 GB in the admin panel |
+| **R2 storage** | 10 GB-month | Capped at 10 GB in the admin panel |
 | **R2 Class A** (writes/lists) | 1,000,000/month | Only admin uploads — a few dozen a month |
 | **R2 Class B** (reads) | 10,000,000/month | Only cache misses, because of the edge cache above |
 | **R2 egress** | Free | — |

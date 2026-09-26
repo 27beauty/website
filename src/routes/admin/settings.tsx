@@ -6,7 +6,7 @@ import { getAllSettings, setSetting } from '../../lib/settings';
 import { hashPassword, verifyPassword } from '../../lib/crypto';
 import { runEbaySync } from '../../lib/ebay/sync';
 import { sellerConnected } from '../../lib/ebay/oauth';
-import { formatBytes, getMediaUsage, recalculateUsage } from '../../lib/media';
+import { FREE_STORAGE_BYTES, formatBytes, getMediaUsage, recalculateUsage } from '../../lib/media';
 import { clampInt, poundsToPence } from '../../lib/util';
 import { formatPence, normalisePriceTiers, penceToInput, websitePriceFromEbay, type PriceTier } from '../../lib/money';
 
@@ -272,12 +272,12 @@ settings.get('/', async (c) => {
               name="media_budget_mb"
               type="number"
               min="10"
-              max="8192"
+              max={String(FREE_STORAGE_BYTES / 1000 ** 2)}
               step="10"
-              value={String(Math.round(mediaUsage.budgetBytes / (1024 * 1024)))}
+              value={String(Math.round(mediaUsage.budgetBytes / 1000 ** 2))}
             />
             <p class="field-hint">
-              Capped at 8&nbsp;GB so it always stays inside Cloudflare's free 10&nbsp;GB.
+              Set to Cloudflare's free 10&nbsp;GB, the most it can go without costing money. Lower it only if you want a smaller cap.
             </p>
           </div>
           <button class="btn btn-secondary" type="submit" name="action" value="save">
@@ -523,11 +523,12 @@ settings.post('/media', async (c) => {
     );
   }
 
-  // 8 GB ceiling, so the limit itself can never be set past the free tier.
-  const mb = clampInt(body.media_budget_mb, 10, 8192, 1024);
-  await setSetting(c.env, 'media.max_bytes', mb * 1024 * 1024);
+  // Never past the free 10 GB, so the limit itself can't start a bill.
+  const maxMb = FREE_STORAGE_BYTES / 1000 ** 2;
+  const mb = clampInt(body.media_budget_mb, 10, maxMb, maxMb);
+  await setSetting(c.env, 'media.max_bytes', Math.min(mb * 1000 ** 2, FREE_STORAGE_BYTES));
   return c.redirect(
-    '/admin/settings?msg=' + encodeURIComponent(`Image storage limit set to ${formatBytes(mb * 1024 * 1024)}.`),
+    '/admin/settings?msg=' + encodeURIComponent(`Image storage limit set to ${formatBytes(Math.min(mb * 1000 ** 2, FREE_STORAGE_BYTES))}.`),
     303,
   );
 });

@@ -56,6 +56,36 @@ export function nowIso(): string {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', pound: '£', euro: '€' };
+
+/**
+ * An eBay listing description (full HTML, often a seller template with styles
+ * and scripts) as readable plain text: paragraphs and list items kept as line
+ * breaks, everything else dropped. Product pages show it as text.
+ */
+export function htmlToText(html: string | null | undefined): string {
+  if (!html) return '';
+  return html
+    .replace(/<(script|style|head|title|noscript)\b[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<li\b[^>]*>/gi, '\n• ')
+    .replace(/<(br|hr)\b[^>]*>/gi, '\n')
+    .replace(/<\/(ul|ol|table)>/gi, '\n\n')
+    .replace(/<\/(p|div|h[1-6]|tr|section|article|blockquote)>/gi, '\n')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+      if (e[0] === '#') {
+        const code = e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+        return Number.isFinite(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : ' ';
+      }
+      return ENTITIES[e.toLowerCase()] ?? m;
+    })
+    .replace(/[ \t\f\v\u00a0]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 /** Truncates text for cards and meta descriptions, on a word boundary. */
 export function excerpt(text: string | null | undefined, length = 160): string {
   if (!text) return '';

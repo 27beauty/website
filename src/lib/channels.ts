@@ -37,18 +37,11 @@ import {
 // Budget
 // ---------------------------------------------------------------------------
 
-export class Budget {
-  constructor(public remaining: number) {}
-  /** Reserves `n` requests; false (and nothing reserved) if there aren't enough. */
-  take(n = 1): boolean {
-    if (this.remaining < n) return false;
-    this.remaining -= n;
-    return true;
-  }
-}
+import { Budget } from './ebay/http';
+export { Budget };
 
-/** Requests per cron run, leaving headroom under Workers Free's 50 for retries and tokens. */
-const CRON_BUDGET = 40;
+/** Requests per cron run: Workers Free's 50, less 6 for token refreshes and retries. */
+const CRON_BUDGET = 44;
 /** Requests for an immediate push after a sale or an admin edit. */
 export const QUICK_PUSH_BUDGET = 12;
 /** Don't retry a listing that failed within this window — stops one bad listing eating every run. */

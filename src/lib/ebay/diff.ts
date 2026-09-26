@@ -19,6 +19,8 @@ export interface ExistingProductRow {
   status?: string;
   /** When eBay last confirmed this listing — the least recently confirmed are checked for having ended first. */
   ebay_synced_at?: string | null;
+  /** 1 when the product already has a description; the sync fetches one for products that don't. */
+  has_description?: number;
 }
 
 export interface ListingDiff {
@@ -107,7 +109,9 @@ export function resolveUpdateFields(
   if (!locks.stockLocked) out.stock = candidate.stock;
   if (!locks.contentLocked) {
     out.title = candidate.title;
-    out.description = candidate.description;
+    // Search results carry no description (only the item details call does),
+    // so a run without one must not wipe the one the product already has.
+    if (candidate.description) out.description = candidate.description;
     out.image_url = candidate.imageUrl;
     out.images_json = candidate.imagesJson;
   }

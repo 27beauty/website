@@ -13,15 +13,37 @@ import type { Env } from '../types';
  * The default budget below is a tenth of the storage allowance.
  */
 
-/** Self-imposed storage cap: 1 GiB, a tenth of the 10 GB free allowance. */
-export const DEFAULT_MEDIA_BUDGET_BYTES = 1024 * 1024 * 1024;
+/**
+ * R2's free storage allowance: 10 GB. Counted in decimal gigabytes, the
+ * smaller reading, so the cap can't cross the allowance however Cloudflare
+ * counts a GB. This is both the default and the highest the limit can be set.
+ */
+export const FREE_STORAGE_BYTES = 10 * 1000 ** 3;
+export const DEFAULT_MEDIA_BUDGET_BYTES = FREE_STORAGE_BYTES;
 
-/** Largest single upload accepted. A phone photo is comfortably under this. */
-export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+/**
+ * Largest single upload. Workers Free accepts request bodies up to 100 MB, but
+ * the upload and the file both sit in the Worker's 128 MB of memory, so 50 MB
+ * is the most that uploads reliably. Any photo from a phone or camera fits.
+ */
+export const MAX_UPLOAD_BYTES = 50 * 1000 ** 2;
 
 const KEY_BYTES = 'media.bytes_used';
 const KEY_COUNT = 'media.object_count';
 const KEY_BUDGET = 'media.max_bytes';
+/** Per-day upload counter, e.g. media.uploads.2026-09-26. Older days are pruned on the next upload. */
+const KEY_UPLOADS_PREFIX = 'media.uploads.';
+
+/**
+ * Most uploads accepted per day: R2's free 1,000,000 writes a month spread
+ * over a 31-day month, less a little for listing and recounting. No real day
+ * gets near it; it only matters if the admin login were ever stolen.
+ */
+export const MAX_UPLOADS_PER_DAY = 30_000;
+
+function uploadsKey(now = new Date()): string {
+  return KEY_UPLOADS_PREFIX + now.toISOString().slice(0, 10);
+}
 
 export interface MediaUsage {
   bytesUsed: number;
@@ -68,7 +90,7 @@ export async function getMediaUsage(env: Env): Promise<MediaUsage> {
     readNumber(env, KEY_BYTES, 0),
     readNumber(env, KEY_COUNT, 0),
     readNumber(env, KEY_BUDGET, DEFAULT_MEDIA_BUDGET_BYTES),
-  ]);
+  ]).then(([b, c, budget]) => [b, c, Math.min(budget, FREE_STORAGE_BYTES)] as const);
   const percentUsed = budgetBytes > 0 ? Math.min(100, Math.round((bytesUsed / budgetBytes) * 100)) : 100;
   return {
     bytesUsed,
@@ -98,13 +120,20 @@ export async function canStore(env: Env, size: number): Promise<StoreDecision> {
       usage,
     };
   }
+  if ((await readNumber(env, uploadsKey(), 0)) >= MAX_UPLOADS_PER_DAY) {
+    return {
+      ok: false,
+      reason: `That's ${MAX_UPLOADS_PER_DAY.toLocaleString('en-GB')} image uploads today, the most Cloudflare's free allowance covers. Try again tomorrow.`,
+      usage,
+    };
+  }
   if (usage.bytesUsed + size > usage.budgetBytes) {
     return {
       ok: false,
       reason:
         `This upload would take image storage past its ${formatBytes(usage.budgetBytes)} limit ` +
         `(${formatBytes(usage.bytesUsed)} used). Delete some images, or raise the limit in Settings — ` +
-        `but keep it under 10 GB or Cloudflare starts charging.`,
+        `the limit is already at Cloudflare's free 10 GB.`,
       usage,
     };
   }
@@ -112,7 +141,9 @@ export async function canStore(env: Env, size: number): Promise<StoreDecision> {
 }
 
 export async function recordUpload(env: Env, bytes: number): Promise<void> {
-  await Promise.all([bump(env, KEY_BYTES, bytes), bump(env, KEY_COUNT, 1)]);
+  const today = uploadsKey();
+  await Promise.all([bump(env, KEY_BYTES, bytes), bump(env, KEY_COUNT, 1), bump(env, today, 1)]);
+  await env.DB.prepare(`DELETE FROM settings WHERE key LIKE ? AND key != ?`).bind(`${KEY_UPLOADS_PREFIX}%`, today).run();
 }
 
 export async function recordDelete(env: Env, bytes: number): Promise<void> {
@@ -190,9 +221,10 @@ export function keyFromMediaUrl(imageUrl: string | null | undefined): string | n
   return key.includes('..') ? null : key;
 }
 
+/** Decimal units (1 GB = 1,000,000,000 bytes), as Cloudflare's dashboard and Finder show sizes. */
 export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  if (bytes < 1000) return `${bytes} B`;
+  if (bytes < 1000 ** 2) return `${Math.round(bytes / 1000)} KB`;
+  if (bytes < 1000 ** 3) return `${(bytes / 1000 ** 2).toFixed(1)} MB`;
+  return `${(bytes / 1000 ** 3).toFixed(2)} GB`;
 }

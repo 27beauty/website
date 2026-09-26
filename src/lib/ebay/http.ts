@@ -5,6 +5,20 @@
  * hammering eBay's rate limiter.
  */
 
+/**
+ * Outbound requests an invocation may still make. Workers Free allows 50 per
+ * invocation (cron run or page request); callers size this from that.
+ */
+export class Budget {
+  constructor(public remaining: number) {}
+  /** Reserves `n` requests; false (and nothing reserved) if there aren't enough. */
+  take(n = 1): boolean {
+    if (this.remaining < n) return false;
+    this.remaining -= n;
+    return true;
+  }
+}
+
 export class EbayRateLimitError extends Error {
   constructor(message = 'eBay API rate limit (HTTP 429)') {
     super(message);

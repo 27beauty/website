@@ -618,7 +618,7 @@ function ProductEditor(props: {
               Upload image
             </button>
           </form>
-          <p class="field-hint">JPEG, PNG, WebP or GIF, up to 5MB. Replaces the main image above.</p>
+          <p class="field-hint">JPEG, PNG, WebP or GIF, up to 50MB. Replaces the main image above. Photos under about 1MB load fastest for shoppers.</p>
         </div>
       ) : null}
     </>
@@ -1329,7 +1329,6 @@ const IMAGE_EXT: Record<string, string> = {
   'image/gif': 'gif',
   'image/svg+xml': 'svg',
 };
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 products.post('/:id/image', async (c) => {
   const id = Number(c.req.param('id'));
@@ -1372,7 +1371,8 @@ products.post('/:id/image', async (c) => {
     .bind(id)
     .first<{ image_url: string | null }>();
 
-  await c.env.MEDIA.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: file.type } });
+  // The File goes straight to R2, without a second in-memory copy (large photos).
+  await c.env.MEDIA.put(key, file, { httpMetadata: { contentType: file.type } });
   await recordUpload(c.env, file.size);
 
   // Stored under the public /media/ route (src/index.tsx), not /admin/media —

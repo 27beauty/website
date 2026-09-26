@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_MEDIA_BUDGET_BYTES,
+  FREE_STORAGE_BYTES,
   MAX_UPLOAD_BYTES,
+  MAX_UPLOADS_PER_DAY,
   canStore,
   formatBytes,
   keyFromMediaUrl,
@@ -36,10 +38,17 @@ function fakeEnv(values: Record<string, number>): Env {
 const MB = 1024 * 1024;
 
 describe('media storage guardrails', () => {
-  it('defaults to a budget well inside the free tier', () => {
-    // Cloudflare's free allowance is 10 GB; the default cap is a tenth of it.
-    expect(DEFAULT_MEDIA_BUDGET_BYTES).toBe(1024 * MB);
-    expect(DEFAULT_MEDIA_BUDGET_BYTES).toBeLessThan(10 * 1024 * MB);
+  it('defaults to the whole free allowance, and never past it', async () => {
+    // Cloudflare's free allowance is 10 GB; decimal GB is the smaller reading.
+    expect(DEFAULT_MEDIA_BUDGET_BYTES).toBe(FREE_STORAGE_BYTES);
+    expect(FREE_STORAGE_BYTES).toBeLessThanOrEqual(10 * 1000 ** 3);
+    // Even a stored limit above the allowance is read back as the allowance.
+    const env = fakeEnv({ 'media.bytes_used': FREE_STORAGE_BYTES - MB, 'media.max_bytes': 50 * 1000 ** 3 });
+    expect((await canStore(env, 2 * MB)).ok).toBe(false);
+  });
+
+  it('accepts a large phone or camera photo', async () => {
+    expect((await canStore(fakeEnv({}), 24 * MB)).ok).toBe(true);
   });
 
   it('allows an upload that fits', async () => {
@@ -49,16 +58,16 @@ describe('media storage guardrails', () => {
   });
 
   it('refuses an upload that would cross the budget', async () => {
-    const env = fakeEnv({ 'media.bytes_used': 1020 * MB });
+    const env = fakeEnv({ 'media.bytes_used': FREE_STORAGE_BYTES - 3 * MB });
     const res = await canStore(env, 5 * MB);
     expect(res.ok).toBe(false);
-    expect(res.reason).toMatch(/past its 1\.00 GB limit/);
+    expect(res.reason).toMatch(/past its .* limit/);
   });
 
   it('refuses a single file over the per-upload cap', async () => {
     const res = await canStore(fakeEnv({}), MAX_UPLOAD_BYTES + 1);
     expect(res.ok).toBe(false);
-    expect(res.reason).toMatch(/5\.0 MB or smaller/);
+    expect(res.reason).toMatch(/50\.0 MB or smaller/);
   });
 
   it('refuses an empty or nonsense file size', async () => {
@@ -94,8 +103,28 @@ describe('media storage guardrails', () => {
 
   it('formats sizes the way the admin panel shows them', () => {
     expect(formatBytes(512)).toBe('512 B');
-    expect(formatBytes(2048)).toBe('2 KB');
-    expect(formatBytes(5 * MB)).toBe('5.0 MB');
-    expect(formatBytes(1024 * MB)).toBe('1.00 GB');
+    expect(formatBytes(2000)).toBe('2 KB');
+    expect(formatBytes(5 * 1000 ** 2)).toBe('5.0 MB');
+    expect(formatBytes(FREE_STORAGE_BYTES)).toBe('10.00 GB');
+  });
+});
+
+describe('daily upload limit', () => {
+  const today = 'media.uploads.' + new Date().toISOString().slice(0, 10);
+
+  it("refuses uploads once today's limit is reached, so R2 writes stay bounded", async () => {
+    const res = await canStore(fakeEnv({ [today]: MAX_UPLOADS_PER_DAY }), MB);
+    expect(res.ok).toBe(false);
+    expect(res.reason).toMatch(/free allowance/);
+  });
+
+  it('allows uploads below the limit, and yesterday does not count', async () => {
+    expect((await canStore(fakeEnv({ [today]: MAX_UPLOADS_PER_DAY - 1 }), MB)).ok).toBe(true);
+    expect((await canStore(fakeEnv({ 'media.uploads.2000-01-01': 999 }), MB)).ok).toBe(true);
+  });
+
+  it('allows as many uploads as the free 1,000,000 R2 writes a month cover, and no more', () => {
+    expect(MAX_UPLOADS_PER_DAY * 31).toBeLessThanOrEqual(1_000_000);
+    expect(MAX_UPLOADS_PER_DAY).toBeGreaterThanOrEqual(30_000);
   });
 });

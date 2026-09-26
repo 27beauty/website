@@ -13,7 +13,8 @@ import { signPayload, verifyPayload } from './crypto';
 
 export const CART_COOKIE = 'cart';
 export const COUPON_COOKIE = 'coupon';
-export const MAX_LINE_QUANTITY = 20;
+/** Only guards against a mistyped quantity; stock is the real limit on what can be bought. */
+export const MAX_LINE_QUANTITY = 999;
 
 const COOKIE_OPTS = {
   httpOnly: true,

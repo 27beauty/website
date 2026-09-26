@@ -6,7 +6,7 @@ import { uniqueSlug } from '../util';
 import { normaliseTitle } from '../matching';
 import { fetchBrowseListings, listingState } from './browse';
 import { diffListings, locksFromRow, resolveUpdateFields, type ExistingProductRow, type ListingDiff } from './diff';
-import { EbayRateLimitError } from './http';
+import { Budget, EbayRateLimitError } from './http';
 import { fetchSellListings } from './inventory';
 import { loadCategoryRules, mapCategory } from './mapping';
 import type { CategoryRule, NormalisedListing } from './types';
@@ -22,20 +22,14 @@ export interface SyncResult {
 /** Total listings fetched across the whole run, so a cron invocation stays inside Workers CPU/subrequest limits. */
 const MAX_LISTINGS_PER_RUN = 1000;
 /**
- * Per-account cap on the extra GET /item/{id} enrichment call (Browse mode),
- * only spent on newly-created products. Kept modest because Browse mode's
- * search itself now costs several subrequests per account (see browse.ts's
- * QUERY_TERMS) and a run processes every active account in one invocation,
- * sharing one Workers subrequest budget (50 on the Free plan).
+ * Outbound requests one sync run may make: Workers Free allows 50 per
+ * invocation, less 6 for token refreshes and one retry. Searches, item
+ * details and ended-listing checks all come out of it, split evenly between
+ * the shops, so the whole allowance is used every run.
  */
-const MAX_ENRICH_CALLS_PER_ACCOUNT = 10;
-/**
- * Listings missing from this run's results that are looked up one by one to
- * see whether they have ended. Each is a subrequest, shared with the search
- * and enrichment calls above, so it stays small; the rest are checked on
- * later runs, least recently confirmed first.
- */
-const MAX_END_CHECKS_PER_ACCOUNT = 4;
+const RUN_REQUEST_BUDGET = 44;
+/** Of each shop's share, requests kept back for checking whether missing listings have ended. */
+const END_CHECK_RESERVE = 4;
 /** Consecutive missed runs before a product is archived — see the note at diff.toEnd below. */
 const MISS_THRESHOLD = 144;
 /** D1 batch() calls are chunked to this many statements to stay well under request-size limits. */
@@ -74,14 +68,18 @@ export async function runEbaySync(env: Env, trigger: 'cron' | 'manual' | 'api'):
     const priceTiers = normalisePriceTiers(await getSetting<unknown>(env, 'ebay.price_tiers', []));
 
     let remainingBudget = MAX_LISTINGS_PER_RUN;
+    const requests = new Budget(RUN_REQUEST_BUDGET);
 
-    for (const account of accounts) {
+    for (const [i, account] of accounts.entries()) {
       if (remainingBudget <= 0) {
         result.errors.push(
           `Per-run cap of ${MAX_LISTINGS_PER_RUN} listings reached — "${account.label}" and any accounts after it were skipped this run`,
         );
         break;
       }
+      // An even share of what's left, so a later shop still gets its turn.
+      const share = new Budget(Math.floor(requests.remaining / (accounts.length - i)));
+      const shareSize = share.remaining;
       try {
         const outcome = await syncAccount(env, account, {
           rules,
@@ -89,6 +87,7 @@ export async function runEbaySync(env: Env, trigger: 'cron' | 'manual' | 'api'):
           centralStock,
           priceTiers,
           maxListings: remainingBudget,
+          budget: share,
         });
         result.created += outcome.created;
         result.updated += outcome.updated;
@@ -99,6 +98,7 @@ export async function runEbaySync(env: Env, trigger: 'cron' | 'manual' | 'api'):
         // One bad account must never abort the whole run.
         result.errors.push(`Account "${account.label}": ${errorMessage(err)}`);
       }
+      requests.take(shareSize - share.remaining);
     }
   } catch (err) {
     result.errors.push(`Sync run failed: ${errorMessage(err)}`);
@@ -144,6 +144,7 @@ async function syncAccount(
     centralStock: boolean;
     priceTiers: PriceTier[];
     maxListings: number;
+    budget: Budget;
   },
 ): Promise<AccountSyncOutcome> {
   const errors: string[] = [];
@@ -156,6 +157,18 @@ async function syncAccount(
   const existingItemIds = new Set(
     existingRows.map((r) => r.ebay_item_id).filter((id): id is string => Boolean(id)),
   );
+  const needsDescription = new Set(
+    existingRows
+      .filter((r) => r.ebay_item_id && !r.has_description && !r.content_locked && !r.merged_into)
+      .map((r) => r.ebay_item_id as string),
+  );
+  const browseOptions = {
+    maxListings: opts.maxListings,
+    existingItemIds,
+    needsDescription,
+    budget: opts.budget,
+    reserve: END_CHECK_RESERVE,
+  };
 
   let listings: NormalisedListing[];
   let rateLimited = false;
@@ -164,11 +177,7 @@ async function syncAccount(
     const sell = await fetchSellListings(env, account, { maxListings: opts.maxListings });
     if (sell.notConfigured) {
       // No refresh token configured for a "sell" account — fall back to browse mode cleanly.
-      const browse = await fetchBrowseListings(env, account, {
-        maxListings: opts.maxListings,
-        existingItemIds,
-        maxEnrichCalls: MAX_ENRICH_CALLS_PER_ACCOUNT,
-      });
+      const browse = await fetchBrowseListings(env, account, browseOptions);
       listings = browse.listings;
       rateLimited = browse.rateLimited;
       errors.push(`Account "${account.label}" is set to sell mode but has no refresh token — used browse mode instead`);
@@ -177,11 +186,7 @@ async function syncAccount(
       rateLimited = sell.rateLimited;
     }
   } else {
-    const browse = await fetchBrowseListings(env, account, {
-      maxListings: opts.maxListings,
-      existingItemIds,
-      maxEnrichCalls: MAX_ENRICH_CALLS_PER_ACCOUNT,
-    });
+    const browse = await fetchBrowseListings(env, account, browseOptions);
     listings = browse.listings;
     rateLimited = browse.rateLimited;
   }
@@ -191,7 +196,7 @@ async function syncAccount(
   }
 
   const diff = diffListings(existingRows, listings);
-  const endings = await reconcileEndedListings(env, account, accountKey, diff);
+  const endings = await reconcileEndedListings(env, account, accountKey, diff, opts.budget);
   errors.push(...endings.errors);
   // First, so a relist's item id is freed from its duplicate before anything else writes it.
   const statements: D1PreparedStatement[] = [...endings.statements];
@@ -334,7 +339,8 @@ async function syncAccount(
 
 /**
  * Products whose listing wasn't in this run's results. The keyword search
- * misses some live listings, so each is checked with eBay (a few per run)
+ * misses some live listings, so each is checked with eBay (as many per run
+ * as the request budget allows)
  * before anything happens to it. A listing that has ended:
  *
  * - was relisted (a live listing in the same shop with the same title): the
@@ -351,6 +357,7 @@ async function reconcileEndedListings(
   account: EbayAccount,
   accountKey: string,
   diff: ListingDiff,
+  budget: Budget,
 ): Promise<{ statements: D1PreparedStatement[]; ended: number; errors: string[] }> {
   const statements: D1PreparedStatement[] = [];
   const errors: string[] = [];
@@ -366,7 +373,8 @@ async function reconcileEndedListings(
   );
 
   const ended: ExistingProductRow[] = [];
-  for (const row of missing.slice(0, MAX_END_CHECKS_PER_ACCOUNT)) {
+  for (const row of missing) {
+    if (!budget.take()) break; // the rest are checked on later runs, least recently confirmed first
     let state;
     try {
       state = await listingState(env, account, row.ebay_item_id as string);
@@ -456,7 +464,7 @@ async function listActiveAccounts(env: Env): Promise<EbayAccount[]> {
 async function listAccountProducts(env: Env, accountLabel: string): Promise<ExistingProductRow[]> {
   const { results } = await env.DB.prepare(
     `SELECT id, ebay_item_id, price_locked, stock_locked, content_locked, ebay_miss_count, merged_into,
-            title, status, ebay_synced_at
+            title, status, ebay_synced_at, (description IS NOT NULL AND trim(description) != '') AS has_description
      FROM products WHERE source = 'ebay' AND ebay_account = ?`,
   )
     .bind(accountLabel)

@@ -29,8 +29,8 @@ import {
  */
 export const channels = new Hono<AppBindings>();
 
-/** Outbound requests an admin action may spend (Workers Free allows 50). */
-const ACTION_BUDGET = 40;
+/** Outbound requests an admin action may spend: Workers Free's 50, less 6 for tokens and retries. */
+const ACTION_BUDGET = 44;
 
 function flashOf(c: { req: { query: (k: string) => string | undefined } }) {
   return { msg: c.req.query('msg') ?? null, err: c.req.query('err') ?? null };

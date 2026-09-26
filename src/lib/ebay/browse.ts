@@ -12,16 +12,18 @@
  * typical catalogue but is not guaranteed exhaustive. It also exposes stock
  * as a coarse availability bucket rather than an exact quantity (see
  * pricing.ts availabilityToStock), and item detail (description, extra
- * images) costs a second call per item — so it is only fetched for
- * newly-created products, bounded by `maxEnrichCalls`. For exact stock and
+ * images) costs a second call per item — so it is fetched for new
+ * listings first, then for products still missing a description, while the
+ * run's request budget lasts. For exact stock and
  * complete catalogue coverage, use sell mode instead.
  */
 
 import type { Env, EbayAccount } from '../../types';
 import type { BrowseItemDetail, BrowseItemSummary, BrowseSearchResponse, NormalisedListing } from './types';
 import { getAppAccessToken } from './oauth';
-import { EbayRateLimitError, fetchWithRetry } from './http';
+import { Budget, EbayRateLimitError, fetchWithRetry } from './http';
 import { amountToPence, availabilityToStock } from './pricing';
+import { htmlToText } from '../util';
 
 const BROWSE_SEARCH_URL = 'https://api.ebay.com/buy/browse/v1/item_summary/search';
 const BROWSE_ITEM_URL = 'https://api.ebay.com/buy/browse/v1/item';
@@ -44,8 +46,16 @@ export interface BrowseFetchOptions {
   maxListings: number;
   /** ebay_item_id values that already have a product row — anything else is "new" and eligible for enrichment. */
   existingItemIds: Set<string>;
-  /** Cap on enrichment (GET /item/{id}) calls for this account this run. */
-  maxEnrichCalls: number;
+  /**
+   * Existing products still without a description. They get the item details
+   * call after new listings, while requests are left, so every product ends
+   * up with its description over a few runs.
+   */
+  needsDescription: Set<string>;
+  /** Outbound requests this account may use this run (searches and item details). */
+  budget: Budget;
+  /** Requests to leave unspent, for the sync's ended-listing checks. */
+  reserve: number;
 }
 
 export interface BrowseFetchResult {
@@ -77,6 +87,7 @@ export async function fetchBrowseListings(
     const sizeBeforeTerm = summariesById.size;
     let offset = 0;
     while (summariesById.size < options.maxListings) {
+      if (options.budget.remaining <= options.reserve || !options.budget.take()) break termLoop;
       const limit = Math.min(PAGE_SIZE, options.maxListings - summariesById.size);
       const url = `${BROWSE_SEARCH_URL}?q=${encodeURIComponent(term)}&filter=${filter}&limit=${limit}&offset=${offset}`;
       let res: Response;
@@ -105,22 +116,25 @@ export async function fetchBrowseListings(
   }
   const summaries = [...summariesById.values()];
 
-  const listings: NormalisedListing[] = [];
-  let enrichCalls = 0;
-  for (const summary of summaries) {
-    let detail: BrowseItemDetail | null = null;
-    const isNew = !options.existingItemIds.has(summary.itemId);
-    if (!rateLimited && isNew && enrichCalls < options.maxEnrichCalls) {
-      enrichCalls++;
-      try {
-        detail = await fetchItemDetail(token, summary.itemId);
-      } catch (err) {
-        if (err instanceof EbayRateLimitError) rateLimited = true;
-        detail = null; // enrichment is best-effort; fall back to the summary
-      }
+  // Item details (description, extra photos) cost a request each: new
+  // listings first, then existing products still missing a description.
+  const isNew = (s: BrowseItemSummary) => !options.existingItemIds.has(s.itemId);
+  const toEnrich = [
+    ...summaries.filter(isNew),
+    ...summaries.filter((s) => !isNew(s) && options.needsDescription.has(s.itemId)),
+  ];
+  const details = new Map<string, BrowseItemDetail>();
+  for (const summary of toEnrich) {
+    if (rateLimited || options.budget.remaining <= options.reserve || !options.budget.take()) break;
+    try {
+      const detail = await fetchItemDetail(token, summary.itemId);
+      if (detail) details.set(summary.itemId, detail);
+    } catch (err) {
+      if (err instanceof EbayRateLimitError) rateLimited = true;
+      // enrichment is best-effort; fall back to the summary
     }
-    listings.push(normaliseBrowseItem(summary, detail));
   }
+  const listings = summaries.map((summary) => normaliseBrowseItem(summary, details.get(summary.itemId) ?? null));
 
   return { listings, rateLimited };
 }
@@ -170,7 +184,7 @@ export function normaliseBrowseItem(
   return {
     itemId: summary.itemId,
     title: summary.title,
-    description: detail?.description ?? detail?.shortDescription ?? null,
+    description: htmlToText(detail?.description) || detail?.shortDescription?.trim() || null,
     pricePence: amountToPence(summary.price ?? null),
     currency: summary.price?.currency ?? 'GBP',
     stock: availabilityToStock(bucket),
