@@ -1031,13 +1031,12 @@ orders.post('/:id/note', async (c) => {
     return c.redirect(`/admin/orders/${id}?err=` + encodeURIComponent('Your session expired — please try again.'), 303);
   }
   const note = typeof body.note === 'string' ? body.note.trim() : '';
-  if (note) {
-    await c.env.DB.prepare(
-      "UPDATE orders SET notes = TRIM(COALESCE(notes || char(10), '') || ?), updated_at = datetime('now') WHERE id = ?",
-    )
-      .bind(`[${new Date().toISOString().slice(0, 16).replace('T', ' ')}] ${note}`, id)
-      .run();
-  }
+  if (!note) return c.redirect(`/admin/orders/${id}?err=` + encodeURIComponent('Write something in the note first.'), 303);
+  await c.env.DB.prepare(
+    "UPDATE orders SET notes = TRIM(COALESCE(notes || char(10), '') || ?), updated_at = datetime('now') WHERE id = ?",
+  )
+    .bind(`[${new Date().toISOString().slice(0, 16).replace('T', ' ')}] ${note}`, id)
+    .run();
   return c.redirect(`/admin/orders/${id}?msg=${encodeURIComponent('Note added.')}`, 303);
 });
 

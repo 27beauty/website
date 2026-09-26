@@ -7,7 +7,8 @@ import { hashPassword, verifyPassword } from '../../lib/crypto';
 import { runEbaySync } from '../../lib/ebay/sync';
 import { sellerConnected } from '../../lib/ebay/oauth';
 import { formatBytes, getMediaUsage, recalculateUsage } from '../../lib/media';
-import { clampInt } from '../../lib/util';
+import { clampInt, poundsToPence } from '../../lib/util';
+import { formatPence, normalisePriceTiers, penceToInput, websitePriceFromEbay, type PriceTier } from '../../lib/money';
 
 /** Store settings, eBay accounts, sync control, secret status, own password. */
 export const settings = new Hono<AppBindings>();
@@ -23,6 +24,31 @@ function str(v: unknown): string {
 function asNumber(v: unknown, fallback: number): number {
   const n = Number(str(v).replace(/[£,\s]/g, ''));
   return Number.isFinite(n) ? n : fallback;
+}
+
+/** Most price bands the Settings form offers. */
+const MAX_PRICE_BANDS = 10;
+
+/** Reads the price band rows from the Settings form. Rows left blank are skipped. */
+function readPriceTiers(body: Record<string, unknown>): { tiers: PriceTier[]; skipped: number } {
+  const tiers: PriceTier[] = [];
+  let skipped = 0;
+  for (let i = 0; i < MAX_PRICE_BANDS; i++) {
+    const underRaw = str(body[`tier_under_${i}`]).trim();
+    const offRaw = str(body[`tier_off_${i}`]).trim();
+    if (!underRaw && !offRaw) continue;
+    const under = poundsToPence(underRaw);
+    const off = poundsToPence(offRaw);
+    // Taking off as much as the band's own threshold could make an item free.
+    if (under === null || off === null || under <= 0 || off <= 0 || off >= under) {
+      skipped++;
+      continue;
+    }
+    tiers.push({ underPence: under, offPence: off });
+  }
+  const elseOff = poundsToPence(str(body.tier_else_off).trim());
+  if (elseOff !== null && elseOff > 0) tiers.push({ underPence: null, offPence: elseOff });
+  return { tiers: normalisePriceTiers(tiers), skipped };
 }
 
 const SECRET_KEYS = [
@@ -46,6 +72,11 @@ settings.get('/', async (c) => {
   ]);
   const accounts = accountsRes.results ?? [];
   const runs = runsRes.results ?? [];
+  const tiers = normalisePriceTiers(s['ebay.price_tiers']);
+  const bands = tiers.filter((t) => t.underPence !== null);
+  const elseTier = tiers.find((t) => t.underPence === null);
+  const bandRows = Array.from({ length: Math.min(MAX_PRICE_BANDS, Math.max(4, bands.length + 2)) }, (_, i) => bands[i] ?? null);
+  const examples = [499, 899, 1499, 2999].map((p) => ({ ebay: p, site: websitePriceFromEbay(p, 0, tiers) }));
 
   return c.html(
     <AdminLayout title="Settings" active="settings" admin={admin} msg={flash.msg} err={flash.err}>
@@ -131,16 +162,45 @@ settings.get('/', async (c) => {
             <label for="parcel2go_enabled">Book shipping with Parcel2Go from order pages</label>
           </div>
         </div>
-        <div class="field" style="max-width:220px;">
-          <label for="ebay_markup_percent">eBay markup %</label>
-          <input
-            id="ebay_markup_percent"
-            name="ebay_markup_percent"
-            type="number"
-            min="0"
-            value={String(asNumber(s['ebay.markup_percent'], 0))}
-          />
+        <h3>Website prices for eBay items</h3>
+        <p class="muted">
+          Take a set amount off the eBay price, by price band. An item goes in the first band its eBay price is under.
+          A price you change on a product's page is locked and never overwritten. Changes apply at the next eBay sync.
+        </p>
+        <div class="tier-list">
+          {bandRows.map((band, i) => (
+            <div class="tier-row">
+              <label for={`tier_under_${i}`}>Under</label>
+              <input
+                id={`tier_under_${i}`}
+                name={`tier_under_${i}`}
+                type="text"
+                inputmode="decimal"
+                placeholder={i === 0 ? '6.00' : ''}
+                value={band ? penceToInput(band.underPence) : ''}
+              />
+              <label for={`tier_off_${i}`}>take off</label>
+              <input
+                id={`tier_off_${i}`}
+                name={`tier_off_${i}`}
+                type="text"
+                inputmode="decimal"
+                placeholder={i === 0 ? '0.40' : ''}
+                value={band ? penceToInput(band.offPence) : ''}
+              />
+            </div>
+          ))}
+          <div class="tier-row">
+            <label for="tier_else_off">Everything else: take off</label>
+            <input id="tier_else_off" name="tier_else_off" type="text" inputmode="decimal" value={elseTier ? penceToInput(elseTier.offPence) : ''} />
+          </div>
         </div>
+        <p class="field-hint">
+          Leave a row blank to remove it.{' '}
+          {tiers.length
+            ? `For example: ${examples.map((e) => `${formatPence(e.ebay)} on eBay → ${formatPence(e.site)}`).join(' · ')}.`
+            : 'No bands set: the website charges the eBay price.'}
+        </p>
 
         <h3>Parcel2Go default parcel size</h3>
         <p class="muted">
@@ -403,7 +463,9 @@ settings.post('/', async (c) => {
   if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
     return c.redirect('/admin/settings?err=' + encodeURIComponent('Your session expired — please try again.'), 303);
   }
+  const priceTiers = readPriceTiers(body);
   await Promise.all([
+    setSetting(c.env, 'ebay.price_tiers', priceTiers.tiers),
     setSetting(c.env, 'store.name', str(body.store_name) || '27beauty'),
     setSetting(c.env, 'store.tagline', str(body.store_tagline)),
     setSetting(c.env, 'store.email', str(body.store_email)),
@@ -414,7 +476,6 @@ settings.post('/', async (c) => {
     setSetting(c.env, 'checkout.enabled', body.checkout_enabled === '1'),
     setSetting(c.env, 'ebay.sync_enabled', body.ebay_sync_enabled === '1'),
     setSetting(c.env, 'ebay.auto_publish', body.ebay_auto_publish === '1'),
-    setSetting(c.env, 'ebay.markup_percent', Math.max(0, asNumber(body.ebay_markup_percent, 0))),
     setSetting(c.env, 'coupon.default_percent', Math.min(100, Math.max(0, asNumber(body.coupon_default_percent, 10)))),
     setSetting(c.env, 'parcel2go.enabled', body.parcel2go_enabled === '1'),
     setSetting(c.env, 'parcel2go.default_weight_kg', Math.max(0.1, asNumber(body.p2g_weight, 1))),
@@ -422,6 +483,15 @@ settings.post('/', async (c) => {
     setSetting(c.env, 'parcel2go.default_width_cm', Math.max(1, asNumber(body.p2g_width, 20))),
     setSetting(c.env, 'parcel2go.default_height_cm', Math.max(1, asNumber(body.p2g_height, 5))),
   ]);
+  if (priceTiers.skipped) {
+    return c.redirect(
+      '/admin/settings?err=' +
+        encodeURIComponent(
+          `Settings saved, but ${priceTiers.skipped} price band${priceTiers.skipped === 1 ? ' was' : 's were'} left out: each needs a price and an amount off smaller than that price.`,
+        ),
+      303,
+    );
+  }
   return c.redirect('/admin/settings?msg=' + encodeURIComponent('Settings saved.'), 303);
 });
 

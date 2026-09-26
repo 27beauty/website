@@ -91,7 +91,7 @@ categories.get('/', async (c) => {
                   {cat.slug === BEAUTY_CATEGORY_SLUG ? (
                     <span class="faint small">Homepage category — rename only</span>
                   ) : (
-                    <form method="post" action={`/admin/categories/${cat.id}/delete`} class="row-actions">
+                    <form method="post" action={`/admin/categories/${cat.id}/delete`} class="cat-delete">
                       <CsrfField token={admin.csrf} />
                       {cat.product_count > 0 || cats.length > 1 ? (
                         <select name="into" aria-label={`Move ${cat.name} products into`} required={cat.product_count > 0}>
@@ -163,14 +163,17 @@ categories.post('/:id/reorder', async (c) => {
   const all = await listCategories(c.env);
   const idx = all.findIndex((cat) => cat.id === id);
   const swapIdx = dir === 'up' ? idx - 1 : idx + 1;
-  if (idx < 0 || swapIdx < 0 || swapIdx >= all.length) return c.redirect('/admin/categories', 303);
-  const a = all[idx];
-  const b = all[swapIdx];
-  await c.env.DB.batch([
-    c.env.DB.prepare('UPDATE categories SET sort_order = ? WHERE id = ?').bind(b.sort_order, a.id),
-    c.env.DB.prepare('UPDATE categories SET sort_order = ? WHERE id = ?').bind(a.sort_order, b.id),
-  ]);
-  return c.redirect('/admin/categories', 303);
+  if (idx < 0 || swapIdx < 0 || swapIdx >= all.length) {
+    return c.redirect('/admin/categories?err=' + encodeURIComponent("That category can't move any further."), 303);
+  }
+  // Renumber the whole list rather than swapping two values: categories that
+  // share a sort_order would otherwise swap to the same order and not move.
+  const moved = all[idx];
+  [all[idx], all[swapIdx]] = [all[swapIdx], all[idx]];
+  await c.env.DB.batch(
+    all.map((cat, i) => c.env.DB.prepare('UPDATE categories SET sort_order = ? WHERE id = ?').bind((i + 1) * 10, cat.id)),
+  );
+  return c.redirect('/admin/categories?msg=' + encodeURIComponent(`Moved "${moved.name}" ${dir}.`), 303);
 });
 
 categories.post('/:id/delete', async (c) => {

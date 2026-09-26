@@ -582,7 +582,7 @@ function ProductEditor(props: {
                 <input id="price_locked" type="checkbox" name="price_locked" value="1" checked={values.price_locked} />
                 <label for="price_locked">Lock price</label>
               </div>
-              <p class="lock-hint">Stops the eBay sync overwriting this price.</p>
+              <p class="lock-hint">Stops the eBay sync overwriting this price. Ticked for you when you change the price.</p>
             </div>
             <div>
               <div class="checkbox-row">
@@ -627,9 +627,10 @@ function ProductEditor(props: {
 
 products.get('/new', async (c) => {
   const admin = getAdmin(c);
+  const flash = flashOf(c);
   const cats = await listCategories(c.env);
   return c.html(
-    <AdminLayout title="New product" active="products" admin={admin}>
+    <AdminLayout title="New product" active="products" admin={admin} msg={flash.msg} err={flash.err}>
       <ProductEditor admin={admin} cats={cats} values={blankForm()} product={null} action="/admin/products/new" heading="New product" />
     </AdminLayout>,
   );
@@ -1132,6 +1133,19 @@ products.post('/:id/qr', async (c) => {
   );
 });
 
+/**
+ * Changing the price is an override: lock it so the eBay sync (and its price
+ * bands) can't put it back. Unticking the lock on an already-locked product
+ * still hands the price back to the sync.
+ */
+export function priceLockAfterEdit(
+  existing: { price_locked: number; price_pence: number },
+  lockTicked: boolean,
+  newPricePence: number,
+): boolean {
+  return lockTicked || (existing.price_locked === 0 && newPricePence !== existing.price_pence);
+}
+
 products.post('/:id', async (c) => {
   const admin = getAdmin(c);
   const id = Number(c.req.param('id'));
@@ -1163,6 +1177,8 @@ products.post('/:id', async (c) => {
     .map((s) => s.trim())
     .filter(Boolean);
 
+  const priceLocked = priceLockAfterEdit(existing, values.price_locked, price);
+
   await c.env.DB.prepare(
     `UPDATE products SET
        title = ?, description = ?, category_id = ?, brand = ?, sku = ?, price_pence = ?, compare_at_pence = ?,
@@ -1184,7 +1200,7 @@ products.post('/:id', async (c) => {
       JSON.stringify(images),
       values.status,
       values.featured ? 1 : 0,
-      values.price_locked ? 1 : 0,
+      priceLocked ? 1 : 0,
       values.stock_locked ? 1 : 0,
       values.content_locked ? 1 : 0,
       ...parcelColumns(values),

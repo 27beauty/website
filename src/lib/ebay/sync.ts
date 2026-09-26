@@ -1,5 +1,5 @@
 import type { EbayAccount, Env } from '../../types';
-import { applyMarkup } from '../money';
+import { normalisePriceTiers, websitePriceFromEbay, type PriceTier } from '../money';
 import { getSetting } from '../settings';
 import { centralStockEnabled } from '../stock';
 import { uniqueSlug } from '../util';
@@ -71,6 +71,7 @@ export async function runEbaySync(env: Env, trigger: 'cron' | 'manual' | 'api'):
     const centralStock = await centralStockEnabled(env);
     const accounts = await listActiveAccounts(env);
     const rules = await loadCategoryRules(env);
+    const priceTiers = normalisePriceTiers(await getSetting<unknown>(env, 'ebay.price_tiers', []));
 
     let remainingBudget = MAX_LISTINGS_PER_RUN;
 
@@ -86,6 +87,7 @@ export async function runEbaySync(env: Env, trigger: 'cron' | 'manual' | 'api'):
           rules,
           importOutOfStock,
           centralStock,
+          priceTiers,
           maxListings: remainingBudget,
         });
         result.created += outcome.created;
@@ -136,7 +138,13 @@ interface AccountSyncOutcome {
 async function syncAccount(
   env: Env,
   account: EbayAccount,
-  opts: { rules: CategoryRule[]; importOutOfStock: boolean; centralStock: boolean; maxListings: number },
+  opts: {
+    rules: CategoryRule[];
+    importOutOfStock: boolean;
+    centralStock: boolean;
+    priceTiers: PriceTier[];
+    maxListings: number;
+  },
 ): Promise<AccountSyncOutcome> {
   const errors: string[] = [];
   // Products are matched to an account by this key, stored in ebay_account.
@@ -199,7 +207,7 @@ async function syncAccount(
     }
     const slug = await uniqueSlug(env.DB, 'products', listing.title);
     const categoryId = mapCategory(listing, opts.rules, account.default_category_id);
-    const pricePence = applyMarkup(listing.pricePence, account.markup_percent);
+    const pricePence = websitePriceFromEbay(listing.pricePence, account.markup_percent, opts.priceTiers);
     const status = account.auto_publish ? 'active' : 'draft';
     statements.push(
       env.DB.prepare(
@@ -234,7 +242,10 @@ async function syncAccount(
     if (opts.centralStock) locks.stockLocked = true;
     const categoryId = mapCategory(listing, opts.rules, account.default_category_id);
     const fields = resolveUpdateFields(locks, {
-      pricePence: listing.pricePence === null ? null : applyMarkup(listing.pricePence, account.markup_percent),
+      pricePence:
+        listing.pricePence === null
+          ? null
+          : websitePriceFromEbay(listing.pricePence, account.markup_percent, opts.priceTiers),
       stock: listing.stock,
       title: listing.title,
       description: listing.description,

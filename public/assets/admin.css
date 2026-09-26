@@ -642,3 +642,16 @@ input[inputmode="decimal"], input[type="number"] { font-variant-numeric: tabular
 .admin-panel .an-subhead { margin-top: 24px; }
 .an-ranked-note { margin-top: 4px; font-size: .8rem; color: var(--ink-faint); }
 .an-footnote { margin-top: 8px; }
+
+/* Settings → website prices for eBay items: one band per row, wraps on phones. */
+.tier-list { display: grid; gap: 8px; margin: 8px 0; }
+.tier-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.tier-row label { margin: 0; font-weight: 500; }
+.tier-row input { width: 6.5em; }
+
+/* Categories → Delete: "move products into" picker and button. Stacks in the narrow phone column. */
+.cat-delete { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0; }
+.cat-delete select { max-width: 100%; min-width: 0; }
+@media (max-width: 640px) {
+  .cat-delete { flex-direction: column; align-items: stretch; min-width: 130px; }
+}

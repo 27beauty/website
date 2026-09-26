@@ -4,6 +4,7 @@ import type { AppBindings, Env } from './types';
 import { readCartLines } from './lib/cart';
 import { listCategories } from './lib/db';
 import { Layout } from './ui/layout';
+import { AdminLayout } from './ui/admin-layout';
 import { storefront } from './routes/storefront';
 import { checkout } from './routes/checkout';
 import { webhooks } from './routes/webhooks';
@@ -118,8 +119,42 @@ app.notFound(async (c) => {
   );
 });
 
+/**
+ * Where to send the owner after an admin form fails: back to the page the form
+ * was on (same site, admin only), with any old message swapped for the error.
+ */
+function adminReturnPath(referer: string | undefined, requestUrl: string): string {
+  try {
+    const from = new URL(referer ?? '', requestUrl);
+    if (from.origin !== new URL(requestUrl).origin || !from.pathname.startsWith('/admin')) return '/admin';
+    from.searchParams.delete('msg');
+    from.searchParams.delete('err');
+    return from.pathname + from.search;
+  } catch {
+    return '/admin';
+  }
+}
+
+const ADMIN_FAILURE = "Something went wrong and that may not have been saved. Check it and try again — if it keeps happening, note what you pressed.";
+
 app.onError((err, c) => {
   console.error('Unhandled error', err);
+  if (c.req.path.startsWith('/admin')) {
+    if (c.req.method === 'POST') {
+      const back = adminReturnPath(c.req.header('referer'), c.req.url);
+      return c.redirect(`${back}${back.includes('?') ? '&' : '?'}err=${encodeURIComponent(ADMIN_FAILURE)}`, 303);
+    }
+    return c.html(
+      <AdminLayout title="Something went wrong" admin={null} err="This page couldn't be loaded. Try again in a moment.">
+        <p>
+          <a class="btn btn-secondary" href="/admin">
+            Back to the dashboard
+          </a>
+        </p>
+      </AdminLayout>,
+      500,
+    );
+  }
   const wantsJson = c.req.path.startsWith('/api') || c.req.header('accept')?.includes('application/json');
   if (wantsJson) return c.json({ error: 'Something went wrong' }, 500);
   return c.html(

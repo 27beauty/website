@@ -347,9 +347,10 @@ async function selectableProducts(env: AppBindings['Bindings']): Promise<Array<{
 
 coupons.get('/new', async (c) => {
   const admin = getAdmin(c);
+  const flash = flashOf(c);
   const products = await selectableProducts(c.env);
   return c.html(
-    <AdminLayout title="New coupon" active="coupons" admin={admin}>
+    <AdminLayout title="New coupon" active="coupons" admin={admin} msg={flash.msg} err={flash.err}>
       <div class="admin-head">
         <div />
         <a class="btn btn-secondary" href="/admin/coupons">

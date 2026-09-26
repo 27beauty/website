@@ -145,7 +145,9 @@ b2b.post('/:id/status', async (c) => {
     return c.redirect('/admin/b2b?err=' + encodeURIComponent('Your session expired — please try again.'), 303);
   }
   const status = typeof body.status === 'string' ? body.status : '';
-  if (!['new', 'read', 'archived'].includes(status)) return c.redirect('/admin/b2b', 303);
+  if (!['new', 'read', 'archived'].includes(status)) {
+    return c.redirect('/admin/b2b?err=' + encodeURIComponent('Unknown status — nothing was changed.'), 303);
+  }
 
   await c.env.DB.prepare(`UPDATE b2b_inquiries SET status = ? WHERE id = ?`).bind(status, id).run();
   return c.redirect('/admin/b2b?msg=' + encodeURIComponent('Updated.'), 303);
