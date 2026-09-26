@@ -3,8 +3,10 @@ import { applyMarkup } from '../money';
 import { getSetting } from '../settings';
 import { centralStockEnabled } from '../stock';
 import { uniqueSlug } from '../util';
-import { fetchBrowseListings } from './browse';
-import { diffListings, locksFromRow, resolveUpdateFields, type ExistingProductRow } from './diff';
+import { normaliseTitle } from '../matching';
+import { fetchBrowseListings, listingState } from './browse';
+import { diffListings, locksFromRow, resolveUpdateFields, type ExistingProductRow, type ListingDiff } from './diff';
+import { EbayRateLimitError } from './http';
 import { fetchSellListings } from './inventory';
 import { loadCategoryRules, mapCategory } from './mapping';
 import type { CategoryRule, NormalisedListing } from './types';
@@ -27,6 +29,13 @@ const MAX_LISTINGS_PER_RUN = 1000;
  * sharing one Workers subrequest budget (50 on the Free plan).
  */
 const MAX_ENRICH_CALLS_PER_ACCOUNT = 10;
+/**
+ * Listings missing from this run's results that are looked up one by one to
+ * see whether they have ended. Each is a subrequest, shared with the search
+ * and enrichment calls above, so it stays small; the rest are checked on
+ * later runs, least recently confirmed first.
+ */
+const MAX_END_CHECKS_PER_ACCOUNT = 4;
 /** Consecutive missed runs before a product is archived — see the note at diff.toEnd below. */
 const MISS_THRESHOLD = 144;
 /** D1 batch() calls are chunked to this many statements to stay well under request-size limits. */
@@ -174,7 +183,10 @@ async function syncAccount(
   }
 
   const diff = diffListings(existingRows, listings);
-  const statements: D1PreparedStatement[] = [];
+  const endings = await reconcileEndedListings(env, account, accountKey, diff);
+  errors.push(...endings.errors);
+  // First, so a relist's item id is freed from its duplicate before anything else writes it.
+  const statements: D1PreparedStatement[] = [...endings.statements];
 
   let created = 0;
   for (const listing of diff.toCreate) {
@@ -274,7 +286,9 @@ async function syncAccount(
   // for browse-mode accounts at all — only sell mode's fetch is a complete,
   // authoritative listing where "not present" reliably means "delisted".
   // Browse-mode delisting has to be manual (or wait for sell mode).
-  let ended = 0;
+  // reconcileEndedListings() above is what ends listings in either mode: it
+  // asks eBay about each missing listing individually rather than guessing.
+  let ended = endings.ended;
   if (account.mode === 'sell') {
     for (const row of diff.toEnd) {
       if (row.merged_into) continue;
@@ -307,6 +321,122 @@ async function syncAccount(
   return { created, updated, ended, fetched: listings.length, errors };
 }
 
+/**
+ * Products whose listing wasn't in this run's results. The keyword search
+ * misses some live listings, so each is checked with eBay (a few per run)
+ * before anything happens to it. A listing that has ended:
+ *
+ * - was relisted (a live listing in the same shop with the same title): the
+ *   existing product takes over the new listing, so it keeps its page,
+ *   category, locks and coupons. A duplicate the relist already created is
+ *   folded into it and archived.
+ * - wasn't relisted: the product is archived, which takes it off the shop.
+ *
+ * Mutates `diff` so the rest of the sync sees the result: adopted listings
+ * move from toCreate to toUpdate, and handled rows leave toEnd.
+ */
+async function reconcileEndedListings(
+  env: Env,
+  account: EbayAccount,
+  accountKey: string,
+  diff: ListingDiff,
+): Promise<{ statements: D1PreparedStatement[]; ended: number; errors: string[] }> {
+  const statements: D1PreparedStatement[] = [];
+  const errors: string[] = [];
+  const keyOf = (title: string | undefined) => normaliseTitle(title ?? '').join(' ');
+  const liveKeys = new Set([...diff.toCreate.map((l) => keyOf(l.title)), ...diff.toUpdate.map((u) => keyOf(u.listing.title))]);
+  liveKeys.delete('');
+  const looksRelisted = (row: ExistingProductRow) => liveKeys.has(keyOf(row.title));
+
+  const missing = diff.toEnd.filter((r) => !r.merged_into && r.status !== 'archived');
+  missing.sort(
+    (a, b) =>
+      Number(looksRelisted(b)) - Number(looksRelisted(a)) || (a.ebay_synced_at ?? '').localeCompare(b.ebay_synced_at ?? ''),
+  );
+
+  const ended: ExistingProductRow[] = [];
+  for (const row of missing.slice(0, MAX_END_CHECKS_PER_ACCOUNT)) {
+    let state;
+    try {
+      state = await listingState(env, account, row.ebay_item_id as string);
+    } catch (err) {
+      if (err instanceof EbayRateLimitError) break;
+      errors.push(`Account "${account.label}": could not check whether "${row.title}" has ended: ${errorMessage(err)}`);
+      continue;
+    }
+    if (state === 'ended') ended.push(row);
+    else if (state === 'live') {
+      // Still on eBay, just not found by the search: check the others first next time.
+      statements.push(env.DB.prepare(`UPDATE products SET ebay_synced_at = datetime('now') WHERE id = ?`).bind(row.id));
+    }
+  }
+  // Archived earlier (ended, or sold out) and now listed again: take the new listing over too.
+  const archived = diff.toEnd.filter((r) => !r.merged_into && r.status === 'archived' && looksRelisted(r));
+
+  const handled = new Set<number>();
+  let endedCount = 0;
+  for (const row of [...ended, ...archived]) {
+    const key = keyOf(row.title);
+    const confirmedThisRun = row.status !== 'archived';
+    const twinAt = confirmedThisRun
+      ? diff.toUpdate.findIndex(
+          (u) =>
+            keyOf(u.listing.title) === key &&
+            !handled.has(u.product.id) &&
+            (!u.product.merged_into || u.product.merged_into === row.id),
+        )
+      : -1;
+    const newAt = twinAt < 0 && key ? diff.toCreate.findIndex((l) => keyOf(l.title) === key) : -1;
+
+    if (key && twinAt >= 0) {
+      const { product: twin, listing } = diff.toUpdate[twinAt];
+      statements.push(
+        env.DB.prepare(
+          `UPDATE products SET ebay_item_id = NULL, merged_into = ?, status = 'archived', updated_at = datetime('now') WHERE id = ?`,
+        ).bind(row.id, twin.id),
+        env.DB.prepare(`UPDATE coupons SET product_id = ? WHERE product_id = ?`).bind(row.id, twin.id),
+        env.DB.prepare(`UPDATE channel_listings SET product_id = ?, updated_at = datetime('now') WHERE product_id = ?`).bind(
+          row.id,
+          twin.id,
+        ),
+        env.DB.prepare(`UPDATE products SET ebay_item_id = ? WHERE id = ?`).bind(listing.itemId, row.id),
+      );
+      diff.toUpdate[twinAt] = { product: { ...row, merged_into: null }, listing };
+      handled.add(twin.id);
+    } else if (newAt >= 0) {
+      const [listing] = diff.toCreate.splice(newAt, 1);
+      statements.push(env.DB.prepare(`UPDATE products SET ebay_item_id = ? WHERE id = ?`).bind(listing.itemId, row.id));
+      diff.toUpdate.push({ product: row, listing });
+    } else if (confirmedThisRun) {
+      endedCount++;
+      statements.push(
+        env.DB.prepare(
+          `UPDATE products SET status = 'archived', ebay_stock = 0, ebay_synced_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
+        ).bind(row.id),
+      );
+    } else {
+      continue;
+    }
+    handled.add(row.id);
+    // Never send stock to a listing that has ended.
+    statements.push(
+      env.DB.prepare(
+        `UPDATE channel_listings SET status = 'ignored', updated_at = datetime('now')
+         WHERE channel = 'ebay' AND account = ? AND external_id = ?`,
+      ).bind(accountKey, bareItemId(row.ebay_item_id as string)),
+    );
+  }
+
+  diff.toEnd = diff.toEnd.filter((r) => !handled.has(r.id));
+  return { statements, ended: endedCount, errors };
+}
+
+/** Browse mode stores "v1|<item number>|0"; channel_listings keeps the bare item number. */
+function bareItemId(itemId: string): string {
+  const m = /^v1\|([^|]+)\|/.exec(itemId);
+  return m ? m[1] : itemId;
+}
+
 async function listActiveAccounts(env: Env): Promise<EbayAccount[]> {
   const { results } = await env.DB.prepare('SELECT * FROM ebay_accounts WHERE active = 1').all<EbayAccount>();
   return results ?? [];
@@ -314,7 +444,8 @@ async function listActiveAccounts(env: Env): Promise<EbayAccount[]> {
 
 async function listAccountProducts(env: Env, accountLabel: string): Promise<ExistingProductRow[]> {
   const { results } = await env.DB.prepare(
-    `SELECT id, ebay_item_id, price_locked, stock_locked, content_locked, ebay_miss_count, merged_into
+    `SELECT id, ebay_item_id, price_locked, stock_locked, content_locked, ebay_miss_count, merged_into,
+            title, status, ebay_synced_at
      FROM products WHERE source = 'ebay' AND ebay_account = ?`,
   )
     .bind(accountLabel)

@@ -15,6 +15,10 @@ export interface ExistingProductRow {
   ebay_miss_count: number;
   /** Folded into another product (same item listed twice) — the sync leaves it alone. */
   merged_into?: number | null;
+  title?: string;
+  status?: string;
+  /** When eBay last confirmed this listing — the least recently confirmed are checked for having ended first. */
+  ebay_synced_at?: string | null;
 }
 
 export interface ListingDiff {

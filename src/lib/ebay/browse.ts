@@ -125,6 +125,31 @@ export async function fetchBrowseListings(
   return { listings, rateLimited };
 }
 
+export type ListingState = 'live' | 'ended' | 'unknown';
+
+/**
+ * Whether one listing still exists on eBay. The keyword search above can
+ * miss live listings, so "not in the search" never means "ended" on its own;
+ * this asks eBay about the one item. eBay answers 404 (errorId 11001) for a
+ * listing that has ended or been removed. Anything else unexpected is
+ * 'unknown', and the caller leaves the product alone.
+ */
+export async function listingState(env: Env, account: EbayAccount, itemId: string): Promise<ListingState> {
+  const token = await getAppAccessToken(env, account);
+  // Browse mode stores RESTful ids ("v1|123|0"); sell mode stores eBay's plain item number.
+  const url = /^\d+$/.test(itemId)
+    ? `${BROWSE_ITEM_URL}/get_item_by_legacy_id?legacy_item_id=${itemId}`
+    : `${BROWSE_ITEM_URL}/${encodeURIComponent(itemId)}`;
+  const res = await fetchWithRetry(url, {
+    headers: { Authorization: `Bearer ${token}`, 'X-EBAY-C-MARKETPLACE-ID': MARKETPLACE_ID },
+  });
+  if (res.status === 404 || res.status === 410) return 'ended';
+  if (!res.ok) return 'unknown';
+  const item = (await res.json()) as { itemEndDate?: string };
+  if (item.itemEndDate && Date.parse(item.itemEndDate) <= Date.now()) return 'ended';
+  return 'live';
+}
+
 async function fetchItemDetail(token: string, itemId: string): Promise<BrowseItemDetail | null> {
   const res = await fetchWithRetry(`${BROWSE_ITEM_URL}/${encodeURIComponent(itemId)}`, {
     headers: { Authorization: `Bearer ${token}`, 'X-EBAY-C-MARKETPLACE-ID': MARKETPLACE_ID },
