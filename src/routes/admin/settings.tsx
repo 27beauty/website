@@ -5,6 +5,7 @@ import { AdminLayout, CsrfField } from '../../ui/admin-layout';
 import { getAllSettings, setSetting } from '../../lib/settings';
 import { hashPassword, verifyPassword } from '../../lib/crypto';
 import { runEbaySync } from '../../lib/ebay/sync';
+import { sellerConnected } from '../../lib/ebay/oauth';
 import { formatBytes, getMediaUsage, recalculateUsage } from '../../lib/media';
 import { clampInt } from '../../lib/util';
 
@@ -234,7 +235,17 @@ settings.get('/', async (c) => {
       <div class="admin-panel">
         <div class="admin-head" style="margin-bottom:10px;">
           <h3 style="margin:0;">eBay accounts</h3>
+          <div class="actions">
+            <a class="btn btn-secondary btn-sm" href="/admin/channels">
+              Sales channels →
+            </a>
+          </div>
         </div>
+        <p class="muted small">
+          <strong>Connect</strong> sends you to eBay to sign in as that shop, so the website can read its orders and
+          update its stock.
+          {c.env.EBAY_RUNAME ? null : ' Waiting on the eBay RuName (see docs/central-stock.md) before shops can be connected.'}
+        </p>
         <div class="admin-table-wrap">
           <table class="admin-table">
             <thead>
@@ -246,6 +257,7 @@ settings.get('/', async (c) => {
                 <th>Auto-publish</th>
                 <th>Active</th>
                 <th>Last sync</th>
+                <th>eBay sign-in</th>
                 <th></th>
               </tr>
             </thead>
@@ -283,6 +295,18 @@ settings.get('/', async (c) => {
                   <td>{a.auto_publish ? 'yes' : 'no'}</td>
                   <td>{a.active ? 'yes' : 'no'}</td>
                   <td class="faint">{a.last_sync_at ?? 'never'}</td>
+                  <td>
+                    <span class="row" style="gap:6px;">
+                      <span class={`pill ${sellerConnected(a) ? 'pill-ok' : 'pill-warn'}`}>
+                        {sellerConnected(a) ? 'connected' : 'not connected'}
+                      </span>
+                      {c.env.EBAY_RUNAME ? (
+                        <a class="btn btn-sm" href={`/admin/channels/ebay/connect?account=${a.id}`}>
+                          {sellerConnected(a) ? 'Reconnect' : 'Connect'}
+                        </a>
+                      ) : null}
+                    </span>
+                  </td>
                   <td>
                     <form method="post" action={`/admin/settings/ebay-accounts/${a.id}/delete`}>
                       <CsrfField token={admin.csrf} />
