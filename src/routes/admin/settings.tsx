@@ -21,8 +21,16 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
 
-function asNumber(v: unknown, fallback: number): number {
-  const n = Number(str(v).replace(/[£,\s]/g, ''));
+/**
+ * A number from a form field ("£3.49") or a stored setting (already a number).
+ * Blank or unreadable input gives the fallback, never 0: saved settings come
+ * back from D1 as numbers, and treating them as text once showed every one as 0.
+ */
+export function asNumber(v: unknown, fallback: number): number {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : fallback;
+  const raw = str(v).replace(/[£,\s]/g, '');
+  if (!raw) return fallback;
+  const n = Number(raw);
   return Number.isFinite(n) ? n : fallback;
 }
 

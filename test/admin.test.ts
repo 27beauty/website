@@ -13,6 +13,7 @@ import {
 } from '../src/lib/qr';
 import { normaliseCouponCode } from '../src/lib/util';
 import { parseCsv, parseProductCsvRows, productsToCsv, toCsvRow } from '../src/routes/admin/products';
+import { asNumber } from '../src/routes/admin/settings';
 import { hashPasswordPbkdf2 } from '../scripts/hash-password.mjs';
 import type { ProductWithCategory } from '../src/types';
 
@@ -215,5 +216,23 @@ describe('validateNewPassword', () => {
 
   it('accepts a valid, matching password pair', () => {
     expect(validateNewPassword('a-long-enough-password', 'a-long-enough-password')).toBeNull();
+  });
+});
+
+describe('Settings number fields (asNumber)', () => {
+  it('shows a saved number as itself, not 0', () => {
+    // D1 settings come back JSON-parsed, so a saved parcel weight is a number.
+    expect(asNumber(2.5, 1)).toBe(2.5);
+    expect(asNumber(30, 30)).toBe(30);
+    expect(asNumber(0, 10)).toBe(0);
+  });
+  it('reads form input, including a £ sign', () => {
+    expect(asNumber('£3.49', 0)).toBe(3.49);
+    expect(asNumber(' 12 ', 0)).toBe(12);
+  });
+  it('falls back for a blank, missing or unreadable value rather than using 0', () => {
+    expect(asNumber('', 1)).toBe(1);
+    expect(asNumber(undefined, 20)).toBe(20);
+    expect(asNumber('abc', 5)).toBe(5);
   });
 });
