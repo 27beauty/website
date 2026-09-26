@@ -32,6 +32,65 @@ export async function listCategoriesWithCounts(
   return results ?? [];
 }
 
+/** Homepage's beauty showcase pulls straight from this category — see db/seed.sql. It can't be deleted. */
+export const BEAUTY_CATEGORY_SLUG = 'hair-beauty';
+
+/** Every category with a count of all its products (any status), for Admin → Categories. */
+export async function listCategoriesForAdmin(env: Env): Promise<Array<Category & { product_count: number }>> {
+  const { results } = await env.DB.prepare(
+    `SELECT c.*, COUNT(p.id) AS product_count
+     FROM categories c
+     LEFT JOIN products p ON p.category_id = c.id
+     GROUP BY c.id
+     ORDER BY c.sort_order ASC, c.name ASC`,
+  ).all<Category & { product_count: number }>();
+  return results ?? [];
+}
+
+/**
+ * Deletes a category, first moving everything that points at it into
+ * `intoId`: its products, the eBay sync's category rules (or the next sync
+ * would put the products straight back into a category that no longer
+ * exists) and any eBay account's default category. One batch, so nothing is
+ * left half-moved. With no `intoId` it only deletes an empty category.
+ */
+export async function deleteCategory(
+  env: Env,
+  id: number,
+  intoId: number | null,
+): Promise<{ ok: true; products: number; rules: number } | { ok: false; error: string }> {
+  const cat = await env.DB.prepare('SELECT id, slug FROM categories WHERE id = ?').bind(id).first<{ id: number; slug: string }>();
+  if (!cat) return { ok: false, error: 'That category no longer exists.' };
+  if (cat.slug === BEAUTY_CATEGORY_SLUG) {
+    return { ok: false, error: "This is the homepage's beauty category, so it can't be deleted — rename it instead." };
+  }
+  const counts = await env.DB.prepare(
+    `SELECT (SELECT COUNT(*) FROM products WHERE category_id = ?1) AS products,
+            (SELECT COUNT(*) FROM ebay_category_map WHERE category_id = ?1) AS rules`,
+  )
+    .bind(id)
+    .first<{ products: number; rules: number }>();
+  const products = counts?.products ?? 0;
+  const rules = counts?.rules ?? 0;
+
+  if (intoId === null) {
+    if (products > 0) return { ok: false, error: 'Choose a category to move its products into.' };
+    await env.DB.prepare('DELETE FROM categories WHERE id = ?').bind(id).run();
+    return { ok: true, products: 0, rules: 0 };
+  }
+  if (intoId === id) return { ok: false, error: "Choose a different category to move its products into." };
+  const into = await env.DB.prepare('SELECT id FROM categories WHERE id = ?').bind(intoId).first();
+  if (!into) return { ok: false, error: 'The category to move into no longer exists.' };
+
+  await env.DB.batch([
+    env.DB.prepare('UPDATE products SET category_id = ?, updated_at = datetime(\'now\') WHERE category_id = ?').bind(intoId, id),
+    env.DB.prepare('UPDATE ebay_category_map SET category_id = ? WHERE category_id = ?').bind(intoId, id),
+    env.DB.prepare('UPDATE ebay_accounts SET default_category_id = ? WHERE default_category_id = ?').bind(intoId, id),
+    env.DB.prepare('DELETE FROM categories WHERE id = ?').bind(id),
+  ]);
+  return { ok: true, products, rules };
+}
+
 export async function getCategoryBySlug(env: Env, slug: string): Promise<Category | null> {
   return env.DB.prepare('SELECT * FROM categories WHERE slug = ?').bind(slug).first<Category>();
 }

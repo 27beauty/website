@@ -9,6 +9,7 @@ import {
   getProductBySlug,
   getProductById,
   relatedProducts,
+  BEAUTY_CATEGORY_SLUG,
 } from '../lib/db';
 import {
   addLine,
@@ -120,9 +121,6 @@ const TRUST_POINTS = [
 // ---------------------------------------------------------------------------
 // Home
 // ---------------------------------------------------------------------------
-
-/** Homepage's beauty showcase pulls straight from this category — see db/seed.sql. */
-const BEAUTY_CATEGORY_SLUG = 'hair-beauty';
 
 storefront.get('/', async (c) => {
   const [categories, categoryTiles, featured, beautyRes] = await Promise.all([

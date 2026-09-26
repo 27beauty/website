@@ -80,7 +80,6 @@ export interface UpdatableFields {
   description?: string | null;
   image_url?: string | null;
   images_json?: string;
-  category_id?: number | null;
 }
 
 /**
@@ -97,7 +96,6 @@ export function resolveUpdateFields(
     description: string | null;
     imageUrl: string | null;
     imagesJson: string;
-    categoryId: number | null;
   },
 ): UpdatableFields {
   const out: UpdatableFields = {};
@@ -109,10 +107,7 @@ export function resolveUpdateFields(
     out.image_url = candidate.imageUrl;
     out.images_json = candidate.imagesJson;
   }
-  // Category is not covered by content_locked in the schema; treat it as
-  // always refreshable (an owner who wants to pin it can move the product to
-  // a manual/non-ebay source, or category assignment can be revisited later
-  // if the owner asks for a dedicated lock).
-  out.category_id = candidate.categoryId;
+  // Category is not written here: the sync only fills it in when a product
+  // has none (sync.ts), so a category the owner picked is never overwritten.
   return out;
 }

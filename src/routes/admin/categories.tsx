@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { AppBindings } from '../../types';
-import { listCategories } from '../../lib/db';
+import { BEAUTY_CATEGORY_SLUG, deleteCategory, listCategories, listCategoriesForAdmin } from '../../lib/db';
 import { getAdmin, verifyCsrf } from '../../lib/admin-auth';
 import { AdminLayout, CsrfField } from '../../ui/admin-layout';
 import { uniqueSlug } from '../../lib/util';
@@ -15,7 +15,7 @@ function flashOf(c: { req: { query: (k: string) => string | undefined } }) {
 categories.get('/', async (c) => {
   const admin = getAdmin(c);
   const flash = flashOf(c);
-  const cats = await listCategories(c.env);
+  const cats = await listCategoriesForAdmin(c.env);
   return c.html(
     <AdminLayout title="Categories" active="products" admin={admin} msg={flash.msg} err={flash.err}>
       <div class="admin-head">
@@ -52,7 +52,8 @@ categories.get('/', async (c) => {
               <th>Order</th>
               <th>Name</th>
               <th>Slug</th>
-              <th>Actions</th>
+              <th class="num">Products</th>
+              <th>Delete</th>
             </tr>
           </thead>
           <tbody>
@@ -85,20 +86,38 @@ categories.get('/', async (c) => {
                   </form>
                 </td>
                 <td class="faint">{cat.slug}</td>
+                <td class="num">{cat.product_count}</td>
                 <td>
-                  <form method="post" action={`/admin/categories/${cat.id}/delete`}>
-                    <CsrfField token={admin.csrf} />
-                    <button class="btn btn-sm btn-danger" type="submit">
-                      Delete
-                    </button>
-                  </form>
+                  {cat.slug === BEAUTY_CATEGORY_SLUG ? (
+                    <span class="faint small">Homepage category — rename only</span>
+                  ) : (
+                    <form method="post" action={`/admin/categories/${cat.id}/delete`} class="row-actions">
+                      <CsrfField token={admin.csrf} />
+                      {cat.product_count > 0 || cats.length > 1 ? (
+                        <select name="into" aria-label={`Move ${cat.name} products into`} required={cat.product_count > 0}>
+                          <option value="">{cat.product_count > 0 ? 'Move products into…' : 'Nothing to move'}</option>
+                          {cats
+                            .filter((other) => other.id !== cat.id)
+                            .map((other) => (
+                              <option value={other.id}>{other.name}</option>
+                            ))}
+                        </select>
+                      ) : null}
+                      <button class="btn btn-sm btn-danger" type="submit">
+                        Delete
+                      </button>
+                    </form>
+                  )}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <p class="field-hint">A category can only be deleted once no products use it.</p>
+      <p class="field-hint">
+        Deleting a category moves its products into the one you pick, along with the eBay sync's rules for it, so
+        new and updated eBay listings land there too.
+      </p>
     </AdminLayout>,
   );
 });
@@ -160,12 +179,11 @@ categories.post('/:id/delete', async (c) => {
   if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
     return c.redirect('/admin/categories?err=' + encodeURIComponent('Your session expired — please try again.'), 303);
   }
-  const inUse = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM products WHERE category_id = ?')
-    .bind(id)
-    .first<{ n: number }>();
-  if ((inUse?.n ?? 0) > 0) {
-    return c.redirect('/admin/categories?err=' + encodeURIComponent('Move or reassign its products before deleting.'), 303);
-  }
-  await c.env.DB.prepare('DELETE FROM categories WHERE id = ?').bind(id).run();
-  return c.redirect('/admin/categories?msg=' + encodeURIComponent('Category deleted.'), 303);
+  const into = typeof body.into === 'string' && body.into !== '' ? Number(body.into) : null;
+  const result = await deleteCategory(c.env, id, into !== null && Number.isInteger(into) ? into : null);
+  if (!result.ok) return c.redirect('/admin/categories?err=' + encodeURIComponent(result.error), 303);
+  const moved = result.products || result.rules
+    ? ` ${result.products} product${result.products === 1 ? '' : 's'} and ${result.rules} eBay rule${result.rules === 1 ? '' : 's'} moved.`
+    : '';
+  return c.redirect('/admin/categories?msg=' + encodeURIComponent(`Category deleted.${moved}`), 303);
 });

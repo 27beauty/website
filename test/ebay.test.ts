@@ -166,7 +166,6 @@ describe('resolveUpdateFields (lock rules)', () => {
     description: 'New description',
     imageUrl: 'https://example.com/new.jpg',
     imagesJson: '["https://example.com/new.jpg"]',
-    categoryId: 5,
   };
 
   it('writes every field when nothing is locked', () => {

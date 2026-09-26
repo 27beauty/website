@@ -228,7 +228,6 @@ async function syncAccount(
       description: listing.description,
       imageUrl: listing.imageUrl,
       imagesJson: JSON.stringify(listing.images),
-      categoryId,
     });
     if (listing.pricePence === null && !locks.priceLocked) {
       errors.push(`"${listing.title}" (${listing.itemId}): non-GBP or unreadable price — kept previous price`);
@@ -248,13 +247,16 @@ async function syncAccount(
     sets.push(
       `status = CASE WHEN status = 'archived' THEN 'active' ELSE status END`,
       `ebay_miss_count = 0`,
+      // Rules only categorise products that have no category yet; one the
+      // owner chose (or a category merge moved it to) stays put.
+      `category_id = COALESCE(category_id, ?)`,
       `ebay_sku = ?`,
       `ebay_url = ?`,
       `ebay_stock = ?`,
       `ebay_synced_at = datetime('now')`,
       `updated_at = datetime('now')`,
     );
-    values.push(listing.sku, listing.itemWebUrl, listing.stock);
+    values.push(categoryId, listing.sku, listing.itemWebUrl, listing.stock);
     values.push(product.id);
     statements.push(
       env.DB.prepare(`UPDATE products SET ${sets.join(', ')} WHERE id = ?`).bind(...values),
