@@ -16,6 +16,8 @@ import { AdminLayout } from '../../ui/admin-layout';
 import { formatPence } from '../../lib/money';
 import { getSetting } from '../../lib/settings';
 import { getPrepayBalancePence, parcel2goConfigured, prepayProblemHint } from '../../lib/parcel2go';
+import { countDraftProducts } from '../../lib/db';
+import { countFailedListings } from '../../lib/channels';
 
 /** Admin panel: auth, dashboard, products, orders, coupons, settings, sync. */
 export const admin = new Hono<AppBindings>();
@@ -78,6 +80,7 @@ admin.get('/', async (c) => {
     c.env.DB.prepare("SELECT COUNT(*) AS n FROM b2b_inquiries WHERE status = 'new'").first<{ n: number }>(),
     c.env.DB.prepare("SELECT COUNT(*) AS n FROM channel_listings WHERE status = 'review'").first<{ n: number }>(),
   ]);
+  const [drafts, failedListings] = await Promise.all([countDraftProducts(c.env), countFailedListings(c.env)]);
   const toReview = reviewRow?.n ?? 0;
 
   const newB2bCount = newB2bRow?.n ?? 0;
@@ -101,6 +104,43 @@ admin.get('/', async (c) => {
       <div class="admin-head">
         <h1>Welcome back{session.name ? `, ${session.name}` : ''}</h1>
       </div>
+
+      {(() => {
+        const items: Array<{ href: string; label: string; why: string }> = [];
+        if (awaiting)
+          items.push({ href: '/admin/orders?view=shipping', label: `${awaiting} order${awaiting === 1 ? '' : 's'} to send`, why: 'Paid and waiting to be packed and posted.' });
+        if (pStats.out_of_stock)
+          items.push({ href: '/admin/stock?view=out', label: `${pStats.out_of_stock} product${pStats.out_of_stock === 1 ? '' : 's'} out of stock`, why: "Customers can't buy them until you add stock." });
+        if (toReview)
+          items.push({ href: '/admin/channels/review', label: `${toReview} listing${toReview === 1 ? '' : 's'} to match`, why: "eBay or Amazon listings the site couldn't match for certain. Not counted or updated until you decide." });
+        if (failedListings)
+          items.push({ href: '/admin/stock?view=all', label: `${failedListings} listing${failedListings === 1 ? '' : 's'} not updating`, why: 'Their last stock update to eBay or Amazon failed. The Stock screen shows why.' });
+        if (drafts)
+          items.push({ href: '/admin/products?status=draft', label: `${drafts} draft product${drafts === 1 ? '' : 's'}`, why: 'Not on sale yet. Most need a price, photo or category.' });
+        if (newB2bCount)
+          items.push({ href: '/admin/b2b', label: `${newB2bCount} new trade enquir${newB2bCount === 1 ? 'y' : 'ies'}`, why: 'Businesses asking about wholesale. Reply by email.' });
+        if (lastSync && lastSync.status === 'error')
+          items.push({ href: '/admin/settings', label: 'eBay sync had problems', why: 'The last check of your eBay listings reported errors. Settings shows the details.' });
+        return (
+          <div class="admin-panel">
+            <h3>Needs your attention</h3>
+            {items.length ? (
+              <ul class="attention-list">
+                {items.map((it) => (
+                  <li>
+                    <a href={it.href}>
+                      <strong>{it.label}</strong>
+                    </a>
+                    <span class="why">{it.why}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p class="muted">Nothing needs you right now.</p>
+            )}
+          </div>
+        );
+      })()}
 
       <div class="stat-grid">
         <div class="stat-tile">
@@ -132,15 +172,6 @@ admin.get('/', async (c) => {
           <div class="stat-label">Out of stock</div>
           <div class="stat-value">{pStats.out_of_stock}</div>
         </div>
-        {toReview > 0 ? (
-          <div class="stat-tile stat-warn">
-            <div class="stat-label">Listings to match</div>
-            <div class="stat-value">{toReview}</div>
-            <div class="stat-sub">
-              <a href="/admin/channels/review">Review matches →</a>
-            </div>
-          </div>
-        ) : null}
         <div class={`stat-tile ${newB2bCount > 0 ? 'stat-warn' : ''}`}>
           <div class="stat-label">New trade enquiries</div>
           <div class="stat-value">{newB2bCount}</div>

@@ -33,6 +33,20 @@ export async function listCategoriesWithCounts(
   return results ?? [];
 }
 
+/** Drafts: products saved but not on sale. */
+export async function countDraftProducts(env: Env): Promise<number> {
+  const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM products WHERE status = 'draft' AND merged_into IS NULL`).first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/** Every product the owner can link a marketplace listing to, for a type-to-search list. */
+export async function listProductChoices(env: Env): Promise<Array<{ id: number; title: string; status: string }>> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, title, status FROM products WHERE merged_into IS NULL ORDER BY title COLLATE NOCASE`,
+  ).all<{ id: number; title: string; status: string }>();
+  return results ?? [];
+}
+
 /** Homepage's beauty showcase pulls straight from this category — see db/seed.sql. It can't be deleted. */
 export const BEAUTY_CATEGORY_SLUG = 'hair-beauty';
 

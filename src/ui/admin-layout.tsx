@@ -90,6 +90,45 @@ const StockShortcut: FC = () => (
   </a>
 );
 
+/** One choice in a Guide: the button or action's name and what it does, in a few words. */
+export interface GuideChoice {
+  label: string;
+  effect: unknown;
+}
+
+/**
+ * The plain-English box at the top of a page that asks the owner to decide
+ * something: what is going on, why, and each choice with its consequence.
+ * Keep every line short — it's read on a phone between other jobs.
+ */
+export const Guide: FC<{ what: unknown; why?: unknown; choices?: GuideChoice[]; tone?: 'info' | 'warn' }> = (props) => (
+  <section class={`guide ${props.tone === 'warn' ? 'guide-warn' : ''}`} aria-label="What's happening">
+    <p>
+      <strong>What's happening:</strong> {props.what}
+    </p>
+    {props.why ? (
+      <p>
+        <strong>Why:</strong> {props.why}
+      </p>
+    ) : null}
+    {props.choices?.length ? (
+      <>
+        <p class="guide-choices-head">
+          <strong>Your choices:</strong>
+        </p>
+        <dl class="guide-choices">
+          {props.choices.map((ch) => (
+            <>
+              <dt>{ch.label}</dt>
+              <dd>{ch.effect}</dd>
+            </>
+          ))}
+        </dl>
+      </>
+    ) : null}
+  </section>
+);
+
 export const AdminLayout: FC<PropsWithChildren<AdminLayoutProps>> = (props) => {
   const title = props.title.includes('27beauty') ? props.title : `${props.title} · 27beauty admin`;
   return (

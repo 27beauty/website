@@ -833,6 +833,25 @@ export async function listingsForProducts(env: Env, productIds: number[]): Promi
   return out;
 }
 
+/** Linked listings whose last stock update failed (shown on the Stock screen with the reason). */
+export async function countFailedListings(env: Env): Promise<number> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM channel_listings WHERE status = 'linked' AND last_error IS NOT NULL`,
+  ).first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/** How many listings are waiting on the owner in Review matches. */
+export async function countListingsToReview(env: Env): Promise<number> {
+  const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM channel_listings WHERE status = 'review'`).first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/** One marketplace listing, for describing a decision after it's made. */
+export async function getChannelListing(env: Env, id: number): Promise<ChannelListing | null> {
+  return env.DB.prepare('SELECT * FROM channel_listings WHERE id = ?').bind(id).first<ChannelListing>();
+}
+
 export async function listingsToReview(env: Env, limit = 100): Promise<(ChannelListing & { suggested_title: string | null })[]> {
   const { results } = await env.DB.prepare(
     `SELECT l.*, p.title AS suggested_title

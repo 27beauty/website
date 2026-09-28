@@ -655,3 +655,31 @@ input[inputmode="decimal"], input[type="number"] { font-variant-numeric: tabular
 @media (max-width: 640px) {
   .cat-delete { flex-direction: column; align-items: stretch; min-width: 130px; }
 }
+
+/* Guide: "What's happening / Why / Your choices" box on pages that ask the owner to decide. */
+.guide { border: 1px solid var(--line); border-left: 4px solid var(--brand); background: var(--surface); border-radius: var(--radius); padding: 12px 14px; margin: 0 0 14px; font-size: .92rem; }
+.guide-warn { border-left-color: var(--warn); background: var(--warn-soft); }
+.guide p { margin: 0 0 6px; }
+.guide p:last-child { margin-bottom: 0; }
+.guide-choices { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
+.guide-choices dt { font-weight: 600; }
+.guide-choices dd { margin: 0; color: var(--ink-soft); }
+@media (max-width: 520px) {
+  .guide-choices { grid-template-columns: 1fr; gap: 0; }
+  .guide-choices dd { margin-bottom: 6px; }
+}
+/* Review matches: why a listing is waiting, and what each button does. */
+.ch-why { margin: 2px 0 8px; }
+.ch-actions { display: grid; gap: 8px; }
+.ch-action { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.ch-action .btn { min-width: 11em; }
+.ch-action span { font-size: .85rem; color: var(--ink-soft); }
+.ch-other { width: 100%; }
+/* Products: what a draft still needs before it can go on sale. */
+.needs { display: block; font-size: .78rem; color: var(--warn); margin-top: 2px; }
+.attention-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.attention-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.attention-list li:last-child { border-bottom: 0; }
+.attention-list .why { color: var(--ink-soft); font-size: .88rem; flex: 1 1 18em; }
+/* The type-to-search box sits inside a radio option; don't size it like the radio. */
+.quote-option input.ch-other { width: 100%; height: auto; min-height: 40px; margin-top: 4px; padding: 8px 10px; flex: 1 1 auto; }

@@ -1,13 +1,16 @@
 import { Hono } from 'hono';
 import type { AppBindings, EbayAccount } from '../../types';
 import { getAdmin, verifyCsrf } from '../../lib/admin-auth';
-import { AdminLayout, CsrfField } from '../../ui/admin-layout';
+import { AdminLayout, CsrfField, Guide } from '../../ui/admin-layout';
+import { getProductById, listProductChoices } from '../../lib/db';
 import { signPayload, verifyPayload } from '../../lib/crypto';
 import { getSetting, setSetting } from '../../lib/settings';
 import { consentUrl, exchangeConsentCode, forgetUserToken, getUserAccessToken } from '../../lib/ebay/oauth';
 import { outOfStockControlEnabled, tokenUserId } from '../../lib/ebay/trading';
 import {
   Budget,
+  countListingsToReview,
+  getChannelListing,
   disableCentralStock,
   enableCentralStock,
   importAmazonListings,
@@ -428,10 +431,22 @@ channels.post('/run', async (c) => {
 // Review matches
 // ---------------------------------------------------------------------------
 
+/** The three kinds of listing, as the owner thinks of them. */
+type ListingKind = 'ebay' | 'fba' | 'fbm';
+function kindOf(l: { channel: string; fulfilment: string }): ListingKind {
+  return l.channel === 'ebay' ? 'ebay' : l.fulfilment === 'amazon' ? 'fba' : 'fbm';
+}
+
+const REVIEW_PAGE_SIZE = 30;
+
 channels.get('/review', async (c) => {
   const admin = getAdmin(c);
   const flash = flashOf(c);
-  const rows = await listingsToReview(c.env, 30);
+  const [rows, total, allProducts] = await Promise.all([
+    listingsToReview(c.env, REVIEW_PAGE_SIZE),
+    countListingsToReview(c.env),
+    listProductChoices(c.env),
+  ]);
   const withSuggestions = await Promise.all(rows.map(async (l) => ({ l, suggestions: await suggestionsFor(c.env, l) })));
 
   return c.html(
@@ -439,79 +454,145 @@ channels.get('/review', async (c) => {
       <div class="admin-head">
         <div>
           <h1>Review matches</h1>
-          <p class="muted">Listings that couldn't be matched to a product with certainty. Nothing here is counted or updated until you decide.</p>
+          <p class="muted">
+            {total ? `${total} waiting.` : 'Nothing waiting.'}
+            {total > rows.length ? ` Showing ${rows.length}; the rest appear as you decide these.` : ''}
+          </p>
         </div>
         <a class="btn btn-secondary btn-sm" href="/admin/channels">
           ← Sales channels
         </a>
       </div>
-      {!rows.length ? (
+
+      {total ? (
+        <Guide
+          what="These eBay and Amazon listings couldn't be matched to a website product for certain."
+          why="Matching by title alone can't always tell sizes, packs or shades apart. Until you decide, each one is left alone: not counted and not updated."
+          choices={[
+            { label: 'Same item — link', effect: 'it becomes part of that product.' },
+            { label: 'Add as new product', effect: 'creates a draft product on the website, not on sale yet.' },
+            { label: 'Different items', effect: 'eBay only: keeps two similar products apart.' },
+            { label: "Don't track", effect: 'ignored for good. Never counted or updated.' },
+          ]}
+        />
+      ) : (
         <div class="admin-panel">
           <p>All done — every listing is matched or set aside.</p>
         </div>
-      ) : null}
+      )}
+
+      <datalist id="all-products">
+        {allProducts.map((p) => (
+          <option value={`${p.title} — #${p.id}`}>{p.status === 'active' ? '' : p.status}</option>
+        ))}
+      </datalist>
+
       <ul class="ch-review">
-        {withSuggestions.map(({ l, suggestions }) => (
-          <li class="admin-panel">
-            <div class="ch-review-head">
-              <span class="pill">{l.channel === 'ebay' ? `eBay · ${l.account}` : 'Amazon'}</span>
-              {l.fulfilment === 'amazon' ? <span class="pill pill-warn">FBA — Amazon ships</span> : null}
-              {l.channel_qty !== null ? <span class="faint small">shows {l.channel_qty} in stock</span> : null}
-            </div>
-            <p class="ch-review-title">
-              <strong>{l.title}</strong>
-              {l.sku ? <span class="faint small"> · SKU {l.sku}</span> : null}
-            </p>
-            {l.product_id ? (
-              <p class="muted small">This eBay listing has its own product on the site and looks like the same item as:</p>
-            ) : (
-              <p class="muted small">Which product is it?</p>
-            )}
-            <form method="post" action={`/admin/channels/review/${l.id}`} class="stack">
-              <CsrfField token={admin.csrf} />
-              <div class="ch-options">
-                {suggestions.map((s, i) => (
+        {withSuggestions.map(({ l, suggestions }) => {
+          const kind = kindOf(l);
+          const where = kind === 'ebay' ? 'eBay' : 'Amazon';
+          const top = suggestions[0];
+          const why = l.product_id
+            ? 'This eBay listing already has its own product, and it looks like the same item as another one you have.'
+            : top
+              ? `The closest website product is ${Math.round(top.score * 100)}% similar: close, but not certain.`
+              : 'Nothing on the website looks like this item.';
+          const linkEffect =
+            kind === 'fba'
+              ? "Shown on that product for reference. Amazon holds this stock, so your count doesn't change."
+              : l.product_id
+                ? 'Merged into one product with one count (the higher quantity is kept).'
+                : `One shared count: this ${where} listing's quantity will follow the website's.`;
+          const newEffect =
+            kind === 'fba'
+              ? 'Draft product at £0 and no stock. Add a price and photo before publishing.'
+              : `Draft product starting at ${l.channel_qty ?? 0} in stock, shared with this listing.`;
+          return (
+            <li class="admin-panel">
+              <div class="ch-review-head">
+                <span class="pill">{kind === 'ebay' ? `eBay · ${l.account}` : 'Amazon'}</span>
+                {kind === 'fba' ? <span class="pill pill-warn">FBA · Amazon ships it · never shares your count</span> : null}
+                {kind === 'fbm' ? <span class="pill pill-ok">FBM · you ship it · shares your count once linked</span> : null}
+                {l.channel_qty !== null ? <span class="faint small">{where} shows {l.channel_qty} in stock</span> : null}
+              </div>
+              <p class="ch-review-title">
+                <strong>{l.title}</strong>
+                {l.sku ? <span class="faint small"> · SKU {l.sku}</span> : null}
+              </p>
+              <p class="muted small ch-why">
+                <strong>Why it's here:</strong> {why}
+              </p>
+              <form method="post" action={`/admin/channels/review/${l.id}`} class="stack">
+                <CsrfField token={admin.csrf} />
+                <div class="ch-options">
+                  {suggestions.map((s, i) => (
+                    <label class="quote-option">
+                      <input type="radio" name="product_id" value={String(s.id)} checked={i === 0} />
+                      <span class="quote-main">
+                        <span class="quote-name">{s.title}</span>
+                        <span class="quote-meta">{Math.round(s.score * 100)}% similar</span>
+                      </span>
+                    </label>
+                  ))}
                   <label class="quote-option">
-                    <input type="radio" name="product_id" value={String(s.id)} checked={i === 0} />
+                    <input type="radio" name="product_id" value="other" checked={!suggestions.length} />
                     <span class="quote-main">
-                      <span class="quote-name">{s.title}</span>
-                      <span class="quote-meta">{Math.round(s.score * 100)}% similar</span>
+                      <span class="quote-name">A different product</span>
+                      <input
+                        class="ch-other"
+                        type="text"
+                        name="other_product"
+                        list="all-products"
+                        placeholder="Start typing a product name…"
+                        aria-label={`Choose a different product for ${l.title}`}
+                      />
                     </span>
                   </label>
-                ))}
-                <label class="quote-option">
-                  <input type="radio" name="product_id" value="other" checked={!suggestions.length} />
-                  <span class="quote-main">
-                    <span class="quote-name">Another product, by number</span>
-                    <input type="number" name="other_id" min="1" placeholder="Product # (from its edit page URL)" />
-                  </span>
-                </label>
-              </div>
-              <div class="row">
-                <button class="btn btn-sm" type="submit" name="action" value="link">
-                  {l.product_id ? 'Same item — merge' : 'Link to this product'}
-                </button>
-                {l.product_id ? (
-                  <button class="btn btn-secondary btn-sm" type="submit" name="action" value="keep">
-                    Different items
-                  </button>
-                ) : null}
-                {!l.product_id && l.fulfilment === 'merchant' ? (
-                  <button class="btn btn-secondary btn-sm" type="submit" name="action" value="new">
-                    Not on the website — add it
-                  </button>
-                ) : null}
-                <button class="btn btn-secondary btn-sm" type="submit" name="action" value="ignore">
-                  Don't track
-                </button>
-              </div>
-            </form>
-          </li>
-        ))}
+                </div>
+                <div class="ch-actions">
+                  <div class="ch-action">
+                    <button class="btn btn-sm" type="submit" name="action" value="link">
+                      Same item — link
+                    </button>
+                    <span>{linkEffect}</span>
+                  </div>
+                  {l.product_id ? (
+                    <div class="ch-action">
+                      <button class="btn btn-secondary btn-sm" type="submit" name="action" value="keep">
+                        Different items
+                      </button>
+                      <span>Both stay as separate products, each with its own count.</span>
+                    </div>
+                  ) : (
+                    <div class="ch-action">
+                      <button class="btn btn-secondary btn-sm" type="submit" name="action" value="new">
+                        Add as new product
+                      </button>
+                      <span>{newEffect}</span>
+                    </div>
+                  )}
+                  <div class="ch-action">
+                    <button class="btn btn-secondary btn-sm" type="submit" name="action" value="ignore">
+                      Don't track
+                    </button>
+                    <span>Ignored for good: never counted or updated.</span>
+                  </div>
+                </div>
+              </form>
+            </li>
+          );
+        })}
       </ul>
     </AdminLayout>,
   );
 });
+
+/** "Title — #123" from the type-to-search box, or a bare number. */
+export function productIdFromChoice(value: unknown): number {
+  const text = typeof value === 'string' ? value.trim() : '';
+  const m = /#(\d+)\s*$/.exec(text) ?? /^(\d+)$/.exec(text);
+  return m ? Number(m[1]) : NaN;
+}
 
 channels.post('/review/:id', async (c) => {
   const body = await c.req.parseBody();
@@ -520,23 +601,40 @@ channels.post('/review/:id', async (c) => {
   }
   const id = Number(c.req.param('id'));
   const action = String(body.action ?? '');
-  const productId = body.product_id === 'other' ? Number(body.other_id) : Number(body.product_id);
+  const productId =
+    body.product_id === 'other' ? productIdFromChoice(body.other_product ?? body.other_id) : Number(body.product_id);
   try {
+    const listing = await getChannelListing(c.env, id);
+    if (!listing) throw new Error('That listing no longer exists.');
+    const kind = kindOf(listing);
+    const where = kind === 'ebay' ? 'eBay' : 'Amazon';
     let moved: number[];
+    let done: string;
     if (action === 'link') {
-      if (!Number.isInteger(productId) || productId <= 0) throw new Error('Choose a product first.');
+      if (!Number.isInteger(productId) || productId <= 0) {
+        throw new Error('Choose a product first: pick a suggestion, or type a product name and choose it from the list.');
+      }
+      const product = await getProductById(c.env, productId);
+      if (!product) throw new Error('That product no longer exists.');
       moved = await resolveListing(c.env, id, { type: 'link', productId });
+      done =
+        kind === 'fba'
+          ? `Linked to "${product.title}" for reference. Your stock count is unchanged.`
+          : `Linked to "${product.title}". It now shares one stock count with this ${where} listing.`;
     } else if (action === 'keep') {
       moved = await resolveListing(c.env, id, { type: 'keep' });
+      done = 'Kept as separate products.';
     } else if (action === 'new') {
       moved = await resolveListing(c.env, id, { type: 'new' });
+      done = `Added "${listing.title}" as a draft product. It isn't on sale until you publish it (Products → Drafts).`;
     } else if (action === 'ignore') {
       moved = await resolveListing(c.env, id, { type: 'ignore' });
+      done = `Set aside "${listing.title}". It won't be counted or updated.`;
     } else {
       throw new Error('Unknown action.');
     }
     pushSoon(c.env, c.executionCtx, moved);
-    return c.redirect(back('/admin/channels/review', 'msg', 'Saved.'), 303);
+    return c.redirect(back('/admin/channels/review', 'msg', done), 303);
   } catch (err) {
     return c.redirect(back('/admin/channels/review', 'err', errorText(err)), 303);
   }

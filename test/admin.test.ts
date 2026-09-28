@@ -12,7 +12,8 @@ import {
   renderQrSvg,
 } from '../src/lib/qr';
 import { normaliseCouponCode } from '../src/lib/util';
-import { parseCsv, parseProductCsvRows, productsToCsv, toCsvRow } from '../src/routes/admin/products';
+import { missingForSale, parseCsv, parseProductCsvRows, productsToCsv, toCsvRow } from '../src/routes/admin/products';
+import { productIdFromChoice } from '../src/routes/admin/channels';
 import { asNumber } from '../src/routes/admin/settings';
 import { hashPasswordPbkdf2 } from '../scripts/hash-password.mjs';
 import type { ProductWithCategory } from '../src/types';
@@ -234,5 +235,19 @@ describe('Settings number fields (asNumber)', () => {
     expect(asNumber('', 1)).toBe(1);
     expect(asNumber(undefined, 20)).toBe(20);
     expect(asNumber('abc', 5)).toBe(5);
+  });
+});
+
+describe('admin guidance helpers', () => {
+  it('reads the product chosen in the review page search box', () => {
+    expect(productIdFromChoice('Dixit Board Game (5511302) — #177')).toBe(177);
+    expect(productIdFromChoice(' 42 ')).toBe(42);
+    expect(productIdFromChoice('Dixit Board Game')).toBeNaN();
+    expect(productIdFromChoice(undefined)).toBeNaN();
+  });
+
+  it('lists what a draft still needs before it can go on sale', () => {
+    expect(missingForSale({ price_pence: 0, image_url: null, category_id: null })).toEqual(['a price', 'a photo', 'a category']);
+    expect(missingForSale({ price_pence: 499, image_url: '/media/x.jpg', category_id: 3 })).toEqual([]);
   });
 });

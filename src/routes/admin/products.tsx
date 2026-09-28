@@ -1,15 +1,15 @@
 import { Hono } from 'hono';
-import type { AppBindings, Category, Coupon, Env, ProductStatus, ProductWithCategory } from '../../types';
-import { getProductById, listCategories } from '../../lib/db';
+import type { AppBindings, Category, ChannelListing, Coupon, Env, ProductStatus, ProductWithCategory } from '../../types';
+import { countDraftProducts, getProductById, listCategories } from '../../lib/db';
 import { getAdmin, verifyCsrf } from '../../lib/admin-auth';
-import { AdminLayout, CsrfField } from '../../ui/admin-layout';
+import { AdminLayout, CsrfField, Guide } from '../../ui/admin-layout';
 import { formatPence, penceToInput } from '../../lib/money';
 import { clampInt, inChunks, parseJsonArray, poundsToPence, uniqueSlug } from '../../lib/util';
 import { randomToken } from '../../lib/crypto';
 import { basketCouponCode, couponQrUrl, formatCouponCode, productCouponCode, renderQrSvg } from '../../lib/qr';
 import { getSetting } from '../../lib/settings';
-import { setStock } from '../../lib/stock';
-import { pushSoon } from '../../lib/channels';
+import { centralStockEnabled, setStock } from '../../lib/stock';
+import { listingsForProducts, pushSoon } from '../../lib/channels';
 import {
   canStore,
   deleteProductImages,
@@ -99,6 +99,23 @@ async function queryAdminProducts(
   return { items: results ?? [], total: countRow?.n ?? 0 };
 }
 
+/** A live product at £0 could be bought for free, so the editor refuses it. */
+const ZERO_PRICE_ERROR = 'Set a price above £0 before making this Active — at £0 customers could buy it for free. Save it as a draft for now if the price isn\'t ready.';
+
+/** "a, b and c" for short lists in sentences. */
+function andList(items: string[]): string {
+  return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/** What a product still needs before it can go on sale: empty when it's ready. */
+export function missingForSale(p: { price_pence: number; image_url: string | null; category_id: number | null }): string[] {
+  const missing: string[] = [];
+  if (!(p.price_pence > 0)) missing.push('a price');
+  if (!p.image_url) missing.push('a photo');
+  if (!p.category_id) missing.push('a category');
+  return missing;
+}
+
 function statusPill(status: ProductStatus) {
   const cls = status === 'active' ? 'pill-ok' : status === 'draft' ? 'pill-warn' : 'pill-bad';
   return <span class={`pill ${cls}`}>{status}</span>;
@@ -117,7 +134,11 @@ products.get('/', async (c) => {
     sort: query.sort,
     page,
   };
-  const [{ items, total }, cats] = await Promise.all([queryAdminProducts(c.env, q), listCategories(c.env)]);
+  const [{ items, total }, cats, drafts] = await Promise.all([
+    queryAdminProducts(c.env, q),
+    listCategories(c.env),
+    countDraftProducts(c.env),
+  ]);
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
   const flash = flashOf(c);
   const backUrl = c.req.path + (new URL(c.req.url).search || '');
@@ -152,6 +173,23 @@ products.get('/', async (c) => {
           </a>
         </div>
       </div>
+
+      {drafts && (!query.status || query.status === 'draft') ? (
+        <Guide
+          what={
+            <>
+              {drafts} product{drafts === 1 ? ' is a draft' : 's are drafts'}: saved, but not on sale.{' '}
+              {query.status === 'draft' ? null : <a href="/admin/products?status=draft">Show drafts →</a>}
+            </>
+          }
+          why="Drafts are created from new Amazon or eBay listings, or saved that way. Most need a price, photo and category before they can go on sale."
+          choices={[
+            { label: 'Publish', effect: 'open it, fill in what it needs, set Status to Active and save.' },
+            { label: 'Leave as draft', effect: 'stays off the shop. Amazon and eBay sales still come off its count.' },
+            { label: 'Archive', effect: 'hidden for good; kept for past orders.' },
+          ]}
+        />
+      ) : null}
 
       {/* Collapsed by default: the stock table is what the owner opens this
           page for, and an expanded filter form pushed it off a phone screen.
@@ -251,6 +289,9 @@ products.get('/', async (c) => {
                 </td>
                 <td>
                   <a href={`/admin/products/${p.id}`}>{p.title}</a>
+                  {p.status === 'draft' && missingForSale(p).length ? (
+                    <span class="needs">Needs {andList(missingForSale(p))} before it can go on sale</span>
+                  ) : null}
                 </td>
                 <td class="faint col-optional">{p.sku ?? '—'}</td>
                 <td class="faint col-optional">{p.category_name ?? '—'}</td>
@@ -433,8 +474,14 @@ function ProductEditor(props: {
   product: ProductWithCategory | null;
   action: string;
   heading: string;
+  /** Marketplace listings that share this product's stock count. */
+  listings?: ChannelListing[];
+  centralStock?: boolean;
 }) {
   const { values, product } = props;
+  const missing = product ? missingForSale(product) : [];
+  const shared = (props.listings ?? []).filter((l) => l.fulfilment === 'merchant');
+  const fba = (props.listings ?? []).filter((l) => l.fulfilment === 'amazon');
   return (
     <>
       <div class="admin-head">
@@ -445,6 +492,41 @@ function ProductEditor(props: {
           </a>
         </div>
       </div>
+
+      {product && product.status === 'draft' ? (
+        <Guide
+          tone="warn"
+          what="This product is a draft: customers can't see or buy it."
+          why={
+            missing.length
+              ? `It still needs ${andList(missing)}.`
+              : 'It has a price, photo and category, so it is ready to go on sale.'
+          }
+          choices={[
+            { label: 'Publish', effect: `${missing.length ? 'add what it needs, then ' : ''}set Status to Active and save.` },
+            { label: 'Leave as draft', effect: 'stays off the shop. Linked Amazon and eBay sales still come off its count.' },
+          ]}
+        />
+      ) : null}
+
+      {product && (shared.length || fba.length) ? (
+        <div class="notice admin-panel">
+          {shared.length ? (
+            <p>
+              <strong>Shares its stock count with:</strong>{' '}
+              {shared.map((l) => `${l.channel === 'ebay' ? `eBay (${l.account})` : 'Amazon'} ${l.channel === 'ebay' ? `#${l.external_id}` : `SKU ${l.external_id}`}`).join(' · ')}.{' '}
+              {props.centralStock
+                ? 'A sale on any of them comes off this count, and changing Stock here updates them within a few minutes.'
+                : 'Centralised stock is off, so they are not updated from here yet.'}
+            </p>
+          ) : null}
+          {fba.length ? (
+            <p class="muted small">
+              Also on Amazon FBA ({fba.map((l) => `SKU ${l.external_id}`).join(', ')}): Amazon holds that stock, so it never changes this count.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {product && product.source === 'ebay' ? (
         <div class="notice notice-warn admin-panel">
@@ -682,9 +764,10 @@ products.post('/new', async (c) => {
   const cats = await listCategories(c.env);
   const price = poundsToPence(values.price);
 
-  if (!values.title || price === null) {
+  const zeroPriceLive = price !== null && price <= 0 && values.status === 'active';
+  if (!values.title || price === null || zeroPriceLive) {
     return c.html(
-      <AdminLayout title="New product" active="products" admin={admin} err="Enter a title and a valid price.">
+      <AdminLayout title="New product" active="products" admin={admin} err={zeroPriceLive ? ZERO_PRICE_ERROR : 'Enter a title and a valid price.'}>
         <ProductEditor admin={admin} cats={cats} values={values} product={null} action="/admin/products/new" heading="New product" />
       </AdminLayout>,
       400,
@@ -929,11 +1012,13 @@ products.get('/:id', async (c) => {
   if (!product) return c.text('Not found', 404);
   const cats = await listCategories(c.env);
   const flash = flashOf(c);
-  const [{ results: itemCoupons }, defaultPercent] = await Promise.all([
+  const [{ results: itemCoupons }, defaultPercent, listingMap, centralStock] = await Promise.all([
     c.env.DB.prepare('SELECT * FROM coupons WHERE product_id = ? ORDER BY id DESC')
       .bind(product.id)
       .all<Coupon>(),
     getSetting<number>(c.env, 'coupon.default_percent', 10),
+    listingsForProducts(c.env, [product.id]),
+    centralStockEnabled(c.env),
   ]);
   return c.html(
     <AdminLayout title={product.title} active="products" admin={admin} msg={flash.msg} err={flash.err}>
@@ -944,6 +1029,8 @@ products.get('/:id', async (c) => {
         product={product}
         action={`/admin/products/${product.id}`}
         heading={`Edit — ${product.title}`}
+        listings={listingMap.get(product.id) ?? []}
+        centralStock={centralStock}
       />
       <ProductQrPanel
         admin={admin}
@@ -1162,9 +1249,10 @@ products.post('/:id', async (c) => {
   const price = poundsToPence(values.price);
   const cats = await listCategories(c.env);
 
-  if (!values.title || price === null) {
+  const zeroPriceLive = price !== null && price <= 0 && values.status === 'active';
+  if (!values.title || price === null || zeroPriceLive) {
     return c.html(
-      <AdminLayout title="Edit product" active="products" admin={admin} err="Enter a title and a valid price.">
+      <AdminLayout title="Edit product" active="products" admin={admin} err={zeroPriceLive ? ZERO_PRICE_ERROR : 'Enter a title and a valid price.'}>
         <ProductEditor admin={admin} cats={cats} values={values} product={existing} action={`/admin/products/${id}`} heading="Edit product" />
       </AdminLayout>,
       400,
@@ -1266,6 +1354,12 @@ products.post('/:id/archive', async (c) => {
     return c.redirect(redirectWith(back, { err: 'Your session expired — please try again.' }), 303);
   }
   const to = body.to === 'active' ? 'active' : 'archived';
+  if (to === 'active') {
+    const product = await getProductById(c.env, id);
+    if (product && !(product.price_pence > 0)) {
+      return c.redirect(redirectWith(back, { err: `"${product.title}" has no price yet. ${ZERO_PRICE_ERROR}` }), 303);
+    }
+  }
   await c.env.DB.prepare("UPDATE products SET status = ?, updated_at = datetime('now') WHERE id = ?")
     .bind(to, id)
     .run();
