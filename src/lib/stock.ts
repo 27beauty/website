@@ -10,6 +10,7 @@
 
 import type { Env, StockMovement, StockReason } from '../types';
 import { getSetting } from './settings';
+import { inChunks } from './util';
 
 export interface StockChange {
   productId: number;
@@ -91,13 +92,15 @@ export async function setStock(
   note?: string,
 ): Promise<number[]> {
   if (!updates.length) return [];
-  const ids = updates.map((u) => u.productId);
-  const { results } = await env.DB.prepare(
-    `SELECT id, stock FROM products WHERE id IN (${ids.map(() => '?').join(',')})`,
-  )
-    .bind(...ids)
-    .all<{ id: number; stock: number }>();
-  const current = new Map((results ?? []).map((r) => [r.id, r.stock]));
+  const current = new Map<number, number>();
+  for (const slice of inChunks(updates.map((u) => u.productId))) {
+    const { results } = await env.DB.prepare(
+      `SELECT id, stock FROM products WHERE id IN (${slice.map(() => '?').join(',')})`,
+    )
+      .bind(...slice)
+      .all<{ id: number; stock: number }>();
+    for (const r of results ?? []) current.set(r.id, r.stock);
+  }
   const stamp = `${Date.now().toString(36)}${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
   return adjustStock(
     env,

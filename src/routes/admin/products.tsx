@@ -4,7 +4,7 @@ import { getProductById, listCategories } from '../../lib/db';
 import { getAdmin, verifyCsrf } from '../../lib/admin-auth';
 import { AdminLayout, CsrfField } from '../../ui/admin-layout';
 import { formatPence, penceToInput } from '../../lib/money';
-import { clampInt, parseJsonArray, poundsToPence, uniqueSlug } from '../../lib/util';
+import { clampInt, inChunks, parseJsonArray, poundsToPence, uniqueSlug } from '../../lib/util';
 import { randomToken } from '../../lib/crypto';
 import { basketCouponCode, couponQrUrl, formatCouponCode, productCouponCode, renderQrSvg } from '../../lib/qr';
 import { getSetting } from '../../lib/settings';
@@ -864,13 +864,15 @@ products.post('/import', async (c) => {
 
   // Rows for stock-locked products keep their count, as before.
   if (csvStock.length) {
-    const ids = csvStock.map((u) => u.productId);
-    const { results: locked } = await c.env.DB.prepare(
-      `SELECT id FROM products WHERE stock_locked = 1 AND id IN (${ids.map(() => '?').join(',')})`,
-    )
-      .bind(...ids)
-      .all<{ id: number }>();
-    const lockedIds = new Set((locked ?? []).map((r) => r.id));
+    const lockedIds = new Set<number>();
+    for (const slice of inChunks(csvStock.map((u) => u.productId))) {
+      const { results: locked } = await c.env.DB.prepare(
+        `SELECT id FROM products WHERE stock_locked = 1 AND id IN (${slice.map(() => '?').join(',')})`,
+      )
+        .bind(...slice)
+        .all<{ id: number }>();
+      for (const r of locked ?? []) lockedIds.add(r.id);
+    }
     const moved = await setStock(c.env, csvStock.filter((u) => !lockedIds.has(u.productId)), 'admin', 'CSV import');
     pushSoon(c.env, c.executionCtx, moved);
   }

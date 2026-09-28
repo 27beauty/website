@@ -1,4 +1,5 @@
 import type { Category, Env, Product, ProductWithCategory } from '../types';
+import { inChunks } from './util';
 
 /**
  * Catalogue queries shared by the storefront, the admin panel and the eBay sync.
@@ -177,13 +178,13 @@ export async function getProductById(env: Env, id: number): Promise<ProductWithC
 export async function getProductsByIds(env: Env, ids: number[]): Promise<Product[]> {
   const unique = [...new Set(ids)].filter((id) => Number.isInteger(id) && id > 0);
   if (!unique.length) return [];
-  const placeholders = unique.map(() => '?').join(',');
-  const { results } = await env.DB.prepare(
-    `SELECT * FROM products WHERE id IN (${placeholders})`,
-  )
-    .bind(...unique)
-    .all<Product>();
-  const byId = new Map((results ?? []).map((p) => [p.id, p]));
+  const byId = new Map<number, Product>();
+  for (const slice of inChunks(unique)) {
+    const { results } = await env.DB.prepare(`SELECT * FROM products WHERE id IN (${slice.map(() => '?').join(',')})`)
+      .bind(...slice)
+      .all<Product>();
+    for (const p of results ?? []) byId.set(p.id, p);
+  }
   return unique.map((id) => byId.get(id)).filter((p): p is Product => Boolean(p));
 }
 

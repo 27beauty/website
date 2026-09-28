@@ -24,6 +24,9 @@ function toSqlite(v: unknown): null | number | bigint | string | Uint8Array {
 
 const READS = /^\s*(select|with|pragma)\b/i;
 
+/** https://developers.cloudflare.com/d1/platform/limits/ — bound parameters per query. */
+const D1_MAX_BOUND_PARAMETERS = 100;
+
 export function createTestD1(): { db: D1Database; exec: (sql: string) => void; all: (sql: string, ...args: unknown[]) => Row[] } {
   const sqlite = new DatabaseSync(':memory:');
   const dir = join(__dirname, '..', '..', 'migrations');
@@ -33,6 +36,11 @@ export function createTestD1(): { db: D1Database; exec: (sql: string) => void; a
 
   const makeStatement = (sql: string, args: unknown[] = []) => {
     const exec = () => {
+      // Cloudflare D1 refuses a statement with more than 100 bound parameters;
+      // SQLite allows thousands, so enforce D1's limit here or tests miss it.
+      if (args.length > D1_MAX_BOUND_PARAMETERS) {
+        throw new Error(`D1_ERROR: too many SQL variables (${args.length} > ${D1_MAX_BOUND_PARAMETERS})`);
+      }
       const st = sqlite.prepare(sql);
       const params = args.map(toSqlite);
       if (READS.test(sql)) {

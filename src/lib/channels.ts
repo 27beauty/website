@@ -16,7 +16,7 @@
 
 import type { ChannelListing, EbayAccount, Env } from '../types';
 import { getSetting, setSetting } from './settings';
-import { uniqueSlug } from './util';
+import { D1_IN_CHUNK, uniqueSlug } from './util';
 import { adjustStock, centralStockEnabled, setStock, type StockChange } from './stock';
 import { MatchIndex, exactDuplicateGroups, matchListing, type MatchCandidate } from './matching';
 import { getUserAccessToken, sellerConnected } from './ebay/oauth';
@@ -525,7 +525,10 @@ interface DirtyListing {
  * anything else is tidied up.
  */
 export async function dirtyListings(env: Env, productIds?: number[]): Promise<DirtyListing[]> {
-  const filter = productIds?.length ? `AND l.product_id IN (${productIds.map(() => '?').join(',')})` : '';
+  // More ids than one D1 query can bind: check every listing instead. Only
+  // listings that differ come back either way, so the answer is the same.
+  const ids = productIds && productIds.length <= D1_IN_CHUNK ? productIds : undefined;
+  const filter = ids?.length ? `AND l.product_id IN (${ids.map(() => '?').join(',')})` : '';
   const { results } = await env.DB.prepare(
     `SELECT l.id, l.channel, l.account, l.external_id, p.stock
        FROM channel_listings l JOIN products p ON p.id = l.product_id
@@ -536,7 +539,7 @@ export async function dirtyListings(env: Env, productIds?: number[]): Promise<Di
       ORDER BY (p.stock = 0) DESC, l.updated_at ASC
       LIMIT 400`,
   )
-    .bind(...(productIds ?? []))
+    .bind(...(ids ?? []))
     .all<DirtyListing>();
   return results ?? [];
 }

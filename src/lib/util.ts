@@ -52,6 +52,19 @@ export function isEmail(value: string): boolean {
   return /^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(value.trim());
 }
 
+/**
+ * D1 refuses a query with more than 100 bound parameters, so any query that
+ * takes one `?` per id runs on slices of this size (room left for other binds).
+ */
+export const D1_IN_CHUNK = 90;
+
+/** Splits ids into D1-sized slices for `IN (?, ?, …)` queries. */
+export function inChunks<T>(items: T[], size = D1_IN_CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
 export function nowIso(): string {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }

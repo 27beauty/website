@@ -3,7 +3,7 @@ import type { AppBindings, Order, OrderStatus, ShippingAddress } from '../../typ
 import { getAdmin, verifyCsrf } from '../../lib/admin-auth';
 import { AdminLayout, AdminPrintPage, CsrfField } from '../../ui/admin-layout';
 import { formatPence } from '../../lib/money';
-import { clampInt } from '../../lib/util';
+import { clampInt, inChunks } from '../../lib/util';
 import { getOrderWithItems, restockCancelledOrder, type OrderWithItems } from '../../lib/orders';
 import { pushSoon } from '../../lib/channels';
 import { getSetting } from '../../lib/settings';
@@ -538,22 +538,27 @@ orders.post('/export-baskets', async (c) => {
     return c.redirect('/admin/orders?view=baskets&err=' + encodeURIComponent('Select at least one basket to export.'), 303);
   }
 
-  const placeholders = ids.map(() => '?').join(',');
-  const { results } = await c.env.DB.prepare(
-    `SELECT order_number, email, customer_name, phone, total_pence, status, created_at, recovery_url
-       FROM orders WHERE id IN (${placeholders}) ORDER BY created_at DESC`,
-  )
-    .bind(...ids)
-    .all<{
-      order_number: string;
-      email: string | null;
-      customer_name: string | null;
-      phone: string | null;
-      total_pence: number;
-      status: string;
-      created_at: string;
-      recovery_url: string | null;
-    }>();
+  type BasketRow = {
+    order_number: string;
+    email: string | null;
+    customer_name: string | null;
+    phone: string | null;
+    total_pence: number;
+    status: string;
+    created_at: string;
+    recovery_url: string | null;
+  };
+  const results: BasketRow[] = [];
+  for (const slice of inChunks(ids)) {
+    const { results: part } = await c.env.DB.prepare(
+      `SELECT order_number, email, customer_name, phone, total_pence, status, created_at, recovery_url
+         FROM orders WHERE id IN (${slice.map(() => '?').join(',')})`,
+    )
+      .bind(...slice)
+      .all<BasketRow>();
+    results.push(...(part ?? []));
+  }
+  results.sort((a, b) => b.created_at.localeCompare(a.created_at));
 
   const csvEscape = (v: string) => `"${v.replace(/"/g, '""')}"`;
   const rows = [

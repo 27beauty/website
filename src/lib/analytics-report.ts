@@ -8,6 +8,7 @@
  */
 
 import type { Env } from '../types';
+import { inChunks } from './util';
 import { PAGE_LABELS, SOURCE_LABELS, type Device, type PageType, type TrafficSource } from './analytics';
 
 export const RANGE_OPTIONS = [7, 30, 90] as const;
@@ -315,12 +316,14 @@ async function productsFor(env: Env, range: Range): Promise<ProductRow[]> {
 
   const ids = [...byId.keys()];
   if (!ids.length) return [];
-  const meta = await env.DB.prepare(
-    `SELECT id, title, slug, stock, price_pence FROM products WHERE id IN (${ids.map(() => '?').join(',')})`,
-  )
-    .bind(...ids)
-    .all<{ id: number; title: string; slug: string; stock: number; price_pence: number }>();
-  for (const m of meta.results ?? []) Object.assign(row(m.id), { title: m.title, slug: m.slug, stock: m.stock, pricePence: m.price_pence });
+  for (const slice of inChunks(ids)) {
+    const meta = await env.DB.prepare(
+      `SELECT id, title, slug, stock, price_pence FROM products WHERE id IN (${slice.map(() => '?').join(',')})`,
+    )
+      .bind(...slice)
+      .all<{ id: number; title: string; slug: string; stock: number; price_pence: number }>();
+    for (const m of meta.results ?? []) Object.assign(row(m.id), { title: m.title, slug: m.slug, stock: m.stock, pricePence: m.price_pence });
+  }
 
   return [...byId.values()]
     .filter((r) => r.title) // deleted products
@@ -354,9 +357,9 @@ async function pairsFor(env: Env, range: Range): Promise<{ bought: PairRow[]; vi
   const raw = [...(bought.results ?? []), ...(viewed.results ?? [])];
   const ids = [...new Set(raw.flatMap((r) => [r.a, r.b]))];
   const titles = new Map<number, string>();
-  if (ids.length) {
-    const res = await env.DB.prepare(`SELECT id, title FROM products WHERE id IN (${ids.map(() => '?').join(',')})`)
-      .bind(...ids)
+  for (const slice of inChunks(ids)) {
+    const res = await env.DB.prepare(`SELECT id, title FROM products WHERE id IN (${slice.map(() => '?').join(',')})`)
+      .bind(...slice)
       .all<{ id: number; title: string }>();
     for (const r of res.results ?? []) titles.set(r.id, r.title);
   }

@@ -3,7 +3,7 @@ import type { AppBindings, Coupon, CouponKind } from '../../types';
 import { getAdmin, verifyCsrf } from '../../lib/admin-auth';
 import { AdminLayout, AdminPrintPage, CsrfField } from '../../ui/admin-layout';
 import { couponQrUrl, formatCouponCode, generateBatchCodes, renderQrSvg } from '../../lib/qr';
-import { normaliseCouponCode } from '../../lib/util';
+import { inChunks, normaliseCouponCode } from '../../lib/util';
 
 /** Coupons + the print-at-packing QR cards — the commercial heart of the site. */
 export const coupons = new Hono<AppBindings>();
@@ -43,11 +43,11 @@ coupons.get('/', async (c) => {
   // rather than an opaque product id.
   const productTitles = new Map<number, string>();
   const scopedIds = [...new Set(rows.map((r) => r.product_id).filter((id): id is number => !!id))];
-  if (scopedIds.length) {
+  for (const slice of inChunks(scopedIds)) {
     const { results: titles } = await c.env.DB.prepare(
-      `SELECT id, title FROM products WHERE id IN (${scopedIds.map(() => '?').join(',')})`,
+      `SELECT id, title FROM products WHERE id IN (${slice.map(() => '?').join(',')})`,
     )
-      .bind(...scopedIds)
+      .bind(...slice)
       .all<{ id: number; title: string }>();
     for (const row of titles ?? []) productTitles.set(row.id, row.title);
   }
