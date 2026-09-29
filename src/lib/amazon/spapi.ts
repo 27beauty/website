@@ -169,6 +169,8 @@ export interface RawAmazonOrder {
   AmazonOrderId?: string;
   OrderStatus?: string;
   FulfillmentChannel?: string;
+  /** When the buyer placed it. */
+  PurchaseDate?: string;
   LastUpdateDate?: string;
 }
 
@@ -177,15 +179,21 @@ export interface RawAmazonOrder {
  * Pending onwards, so everything but Canceled counts; Canceled is returned
  * separately so a sale already counted can be put back.
  */
-export function classifyOrders(orders: RawAmazonOrder[]): { sold: string[]; cancelled: string[] } {
+export function classifyOrders(orders: RawAmazonOrder[], placedAfter?: string): { sold: string[]; cancelled: string[]; placedBefore: string[] } {
   const sold: string[] = [];
   const cancelled: string[] = [];
+  // Orders come back when they're *updated* (e.g. dispatched). One placed
+  // before counting started is already in the count it started from.
+  const placedBefore: string[] = [];
+  const cutoff = placedAfter ? Date.parse(placedAfter) : NaN;
   for (const o of orders) {
     if (!o.AmazonOrderId || o.FulfillmentChannel === 'AFN') continue;
+    const placed = o.PurchaseDate ? Date.parse(o.PurchaseDate) : NaN;
     if (o.OrderStatus === 'Canceled') cancelled.push(o.AmazonOrderId);
+    else if (Number.isFinite(cutoff) && Number.isFinite(placed) && placed < cutoff) placedBefore.push(o.AmazonOrderId);
     else if (o.OrderStatus !== 'Unfulfillable') sold.push(o.AmazonOrderId);
   }
-  return { sold, cancelled };
+  return { sold, cancelled, placedBefore };
 }
 
 export async function fetchUpdatedOrders(

@@ -237,7 +237,7 @@ export interface ChannelListing {
   updated_at: string;
 }
 
-export type StockReason = 'website_sale' | 'ebay_sale' | 'amazon_sale' | 'cancel' | 'admin' | 'start' | 'merge';
+export type StockReason = 'website_sale' | 'ebay_sale' | 'amazon_sale' | 'cancel' | 'admin' | 'start' | 'merge' | 'correction';
 
 export interface StockMovement {
   id: number;

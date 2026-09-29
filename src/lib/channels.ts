@@ -366,6 +366,24 @@ async function recordedSales(env: Env, reason: 'ebay_sale' | 'amazon_sale', refs
   return out;
 }
 
+/** Sales that have already been put back, by a cancellation or a correction — never put back twice. */
+async function putBackRefs(env: Env, refs: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let i = 0; i < refs.length; i += 90) {
+    const slice = refs.slice(i, i + 90);
+    const { results } = await env.DB.prepare(
+      `SELECT ref FROM stock_movements WHERE reason IN ('cancel', 'correction') AND ref IN (${slice.map(() => '?').join(',')})`,
+    )
+      .bind(...slice)
+      .all<{ ref: string }>();
+    for (const r of results ?? []) out.add(r.ref);
+  }
+  return out;
+}
+
+/** How long a sale whose listing isn't linked yet is retried before it's reported and left. */
+const UNMATCHED_RETRY_MS = 24 * 60 * 60 * 1000;
+
 export interface PollResult {
   sales: number;
   cancellations: number;
@@ -383,10 +401,15 @@ export async function pollEbaySales(env: Env, account: EbayAccount, budget: Budg
   const fetched = await fetchModifiedOrders(token, cursor, pages);
   budget.take(fetched.calls);
 
-  const lines = saleLines(fetched.orders);
+  const lines = saleLines(fetched.orders, since);
   const products = await listingProductMap(env, 'ebay', key, lines.map((l) => l.itemId));
   const refOf = (l: (typeof lines)[number]) => `ebay:${l.orderId}:${l.lineItemId}`;
-  const already = await recordedSales(env, 'ebay_sale', lines.filter((l) => l.cancelled).map(refOf));
+  const cancelledRefs = lines.filter((l) => l.cancelled).map(refOf);
+  const already = await recordedSales(env, 'ebay_sale', cancelledRefs);
+  const alreadyBack = await putBackRefs(env, cancelledRefs);
+  // A sale whose listing isn't linked yet (e.g. a relist the site hasn't
+  // picked up) is read again on later runs, so it's counted once it's linked.
+  let holdCursorAt: string | null = null;
 
   const changes: StockChange[] = [];
   const unmatched: string[] = [];
@@ -396,7 +419,7 @@ export async function pollEbaySales(env: Env, account: EbayAccount, budget: Budg
     const ref = refOf(l);
     if (l.cancelled) {
       const taken = already.get(ref);
-      if (taken) {
+      if (taken && !alreadyBack.has(ref)) {
         changes.push({
           productId: taken.productId,
           delta: -taken.delta,
@@ -412,6 +435,10 @@ export async function pollEbaySales(env: Env, account: EbayAccount, budget: Budg
     const productId = products.get(l.itemId);
     if (!productId) {
       unmatched.push(`eBay item ${l.itemId} (${l.title.slice(0, 40)})`);
+      const modified = l.lastModified ? Date.parse(l.lastModified) : NaN;
+      if (l.lastModified && Number.isFinite(modified) && Date.now() - modified < UNMATCHED_RETRY_MS) {
+        if (!holdCursorAt || l.lastModified < holdCursorAt) holdCursorAt = l.lastModified;
+      }
       continue;
     }
     changes.push({
@@ -425,17 +452,31 @@ export async function pollEbaySales(env: Env, account: EbayAccount, budget: Budg
     sales++;
   }
   const moved = await adjustStock(env, changes);
-  await saveCursor(env, 'ebay', key, fetched.complete ? newestModified(fetched.orders, cursor) : cursor, unmatched.length ? `Sold but not linked: ${unmatched.join('; ')}`.slice(0, 1000) : null);
+  const newest = fetched.complete ? newestModified(fetched.orders, cursor) : cursor;
+  const next = holdCursorAt && holdCursorAt < newest ? holdCursorAt : newest;
+  await saveCursor(env, 'ebay', key, next, unmatched.length ? `Sold but not linked: ${unmatched.join('; ')}`.slice(0, 1000) : null);
   return { sales, cancellations, unmatched, moved };
+}
+
+/**
+ * When Amazon orders start counting: when centralised stock was switched on,
+ * or when Amazon was connected (its first listing read) if that was later —
+ * Amazon's quantities at that moment already include earlier orders.
+ */
+export async function amazonCountingFrom(env: Env, since: string): Promise<string> {
+  const row = await env.DB.prepare(`SELECT MIN(created_at) AS t FROM channel_listings WHERE channel = 'amazon'`).first<{ t: string | null }>();
+  const connected = row?.t ? new Date(`${row.t.replace(' ', 'T')}Z`).toISOString() : null;
+  return connected && connected > since ? connected : since;
 }
 
 export async function pollAmazonSales(env: Env, budget: Budget, since: string): Promise<PollResult> {
   const account = env.AMAZON_SELLER_ID as string;
-  const cursor = await getCursor(env, 'amazon', account, since);
+  const countFrom = await amazonCountingFrom(env, since);
+  const cursor = await getCursor(env, 'amazon', account, countFrom);
   const counter: CallCounter = { calls: 0 };
   if (!budget.take()) return { sales: 0, cancellations: 0, unmatched: [], moved: [] };
   const { orders, complete } = await fetchUpdatedOrders(env, counter, cursor);
-  const { sold, cancelled } = classifyOrders(orders);
+  const { sold, cancelled } = classifyOrders(orders, countFrom);
 
   // Orders already counted in full need no item lookup (saves Amazon's tight rate limit).
   const { results: seen } = await env.DB.prepare(
@@ -481,7 +522,8 @@ export async function pollAmazonSales(env: Env, budget: Budget, since: string): 
     )
       .bind(`amazon:${orderId}:%`)
       .all<{ ref: string; product_id: number; delta: number; note: string | null }>();
-    for (const r of results ?? []) {
+    const back = await putBackRefs(env, (results ?? []).map((r) => r.ref));
+    for (const r of (results ?? []).filter((x) => !back.has(x.ref))) {
       const sku = /SKU (.+)$/.exec(r.note ?? '')?.[1];
       changes.push({
         productId: r.product_id,
@@ -721,8 +763,105 @@ export async function disableCentralStock(env: Env): Promise<void> {
 // The cron job
 // ---------------------------------------------------------------------------
 
+/**
+ * One-off repair. Until orders were filtered by when they were placed, an
+ * order placed before counting started came back when it was dispatched and
+ * was taken off a second time (its quantity was already out of the starting
+ * count). This re-reads orders changed since counting started, puts back each
+ * such sale (a 'correction' in the stock history, once per sale), and rewinds
+ * the order cursors so any sale that was skipped because its listing wasn't
+ * linked yet is picked up by the normal check.
+ */
+export async function reconcileCountedSales(
+  env: Env,
+  budget: Budget,
+  since: string,
+): Promise<{ corrected: number; complete: boolean; moved: number[]; errors: string[] }> {
+  const changes: StockChange[] = [];
+  const errors: string[] = [];
+  let complete = true;
+
+  for (const account of await connectedEbayAccounts(env)) {
+    const key = accountKey(account);
+    try {
+      const token = await getUserAccessToken(env, account);
+      if (!token) continue;
+      const pages = Math.min(5, budget.remaining);
+      if (pages < 1) {
+        complete = false;
+        break;
+      }
+      const fetched = await fetchModifiedOrders(token, since, pages);
+      budget.take(fetched.calls);
+      if (!fetched.complete) complete = false;
+      const cutoff = Date.parse(since);
+      const before = fetched.orders.filter(
+        (o) => o.creationDate && Date.parse(o.creationDate) < cutoff && o.cancelStatus?.cancelState !== 'CANCELED',
+      );
+      const refs = saleLines(before).map((l) => `ebay:${l.orderId}:${l.lineItemId}`);
+      const taken = await recordedSales(env, 'ebay_sale', refs);
+      const back = await putBackRefs(env, refs);
+      for (const [ref, t] of taken) {
+        if (back.has(ref)) continue;
+        changes.push({
+          productId: t.productId,
+          delta: -t.delta,
+          reason: 'correction',
+          ref,
+          note: `eBay order ${ref.split(':')[1]} was placed before centralised stock started, so it was already in the starting count`,
+        });
+      }
+      if (fetched.complete) await saveCursor(env, 'ebay', key, since, null);
+    } catch (err) {
+      complete = false;
+      errors.push(`eBay ${account.label}: ${errorText(err)}`);
+    }
+  }
+
+  if (amazonConfigured(env)) {
+    try {
+      const account = env.AMAZON_SELLER_ID as string;
+      const countFrom = await amazonCountingFrom(env, since);
+      if (budget.take()) {
+        const counter: CallCounter = { calls: 0 };
+        const { orders, complete: done } = await fetchUpdatedOrders(env, counter, since);
+        if (!done) complete = false;
+        const { placedBefore } = classifyOrders(orders, countFrom);
+        for (const orderId of placedBefore) {
+          const { results } = await env.DB.prepare(
+            `SELECT ref, product_id, delta FROM stock_movements WHERE reason = 'amazon_sale' AND ref LIKE ?`,
+          )
+            .bind(`amazon:${orderId}:%`)
+            .all<{ ref: string; product_id: number; delta: number }>();
+          const back = await putBackRefs(env, (results ?? []).map((r) => r.ref));
+          for (const r of (results ?? []).filter((x) => !back.has(x.ref))) {
+            changes.push({
+              productId: r.product_id,
+              delta: -r.delta,
+              reason: 'correction',
+              ref: r.ref,
+              note: `Amazon order ${orderId} was placed before Amazon was connected, so it was already in its starting count`,
+            });
+          }
+        }
+        if (done) await saveCursor(env, 'amazon', account, countFrom, null);
+      } else {
+        complete = false;
+      }
+    } catch (err) {
+      complete = false;
+      errors.push(`Amazon: ${errorText(err)}`);
+    }
+  }
+
+  const moved = await adjustStock(env, changes);
+  return { corrected: changes.length, complete, moved, errors };
+}
+
 export interface StockJobSummary {
   at: string;
+  /** Sales put back by the one-off reconciliation (see reconcileCountedSales). */
+  corrected?: number;
   merged: number;
   sales: number;
   cancellations: number;
@@ -752,6 +891,16 @@ export async function runStockJob(env: Env, now = new Date()): Promise<StockJobS
   const enabled = await centralStockEnabled(env);
   if (enabled) {
     const since = (await getSetting<string | null>(env, 'stock.enabled_at', null)) ?? now.toISOString();
+    if (!(await getSetting<boolean>(env, 'stock.reconciled_v1', false))) {
+      try {
+        const r = await reconcileCountedSales(env, budget, since);
+        summary.corrected = r.corrected;
+        summary.errors.push(...r.errors);
+        if (r.complete) await setSetting(env, 'stock.reconciled_v1', true);
+      } catch (err) {
+        summary.errors.push(`Reconcile: ${errorText(err)}`);
+      }
+    }
     for (const account of connected) {
       try {
         const r = await pollEbaySales(env, account, budget, since);

@@ -59,8 +59,8 @@ describe('eBay orders', () => {
       { orderId: 'D', lineItems: [{ lineItemId: '4', quantity: 1 }] },
     ]);
     expect(lines).toEqual([
-      { orderId: 'A', lineItemId: '1', itemId: '111', quantity: 2, title: 'x', cancelled: false },
-      { orderId: 'B', lineItemId: '2', itemId: '222', quantity: 1, title: '', cancelled: true },
+      { orderId: 'A', lineItemId: '1', itemId: '111', quantity: 2, title: 'x', cancelled: false, placedAt: null, lastModified: null },
+      { orderId: 'B', lineItemId: '2', itemId: '222', quantity: 1, title: '', cancelled: true, placedAt: null, lastModified: null },
     ]);
   });
 });
@@ -87,7 +87,7 @@ describe('Amazon', () => {
         { AmazonOrderId: '4', OrderStatus: 'Shipped', FulfillmentChannel: 'AFN' },
         { AmazonOrderId: '5', OrderStatus: 'Unfulfillable', FulfillmentChannel: 'MFN' },
       ]),
-    ).toEqual({ sold: ['1', '2'], cancelled: ['3'] });
+    ).toEqual({ sold: ['1', '2'], cancelled: ['3'], placedBefore: [] });
   });
 });
 
@@ -119,5 +119,29 @@ describe('eBay account-deletion challenge', () => {
       .join('');
     expect(r).toBe(expected);
     expect(r).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe('orders placed before counting started', () => {
+  it('eBay: skips sales placed before the cutoff, but still reports cancellations', () => {
+    const orders = [
+      { orderId: 'A', creationDate: '2026-01-01T00:00:00Z', lastModifiedDate: '2026-02-01T00:00:00Z', lineItems: [{ lineItemId: '1', legacyItemId: '9', quantity: 1 }] },
+      { orderId: 'B', creationDate: '2026-03-01T00:00:00Z', lineItems: [{ lineItemId: '2', legacyItemId: '9', quantity: 2 }] },
+      { orderId: 'C', creationDate: '2026-01-01T00:00:00Z', cancelStatus: { cancelState: 'CANCELED' }, lineItems: [{ lineItemId: '3', legacyItemId: '9', quantity: 1 }] },
+    ];
+    expect(saleLines(orders, '2026-02-01T00:00:00Z').map((l) => l.orderId)).toEqual(['B', 'C']);
+    expect(saleLines(orders).map((l) => l.orderId)).toEqual(['A', 'B', 'C']);
+  });
+
+  it('Amazon: separates orders placed before the cutoff from new sales', () => {
+    const r = classifyOrders(
+      [
+        { AmazonOrderId: 'old', OrderStatus: 'Shipped', FulfillmentChannel: 'MFN', PurchaseDate: '2026-01-01T00:00:00Z' },
+        { AmazonOrderId: 'new', OrderStatus: 'Unshipped', FulfillmentChannel: 'MFN', PurchaseDate: '2026-03-01T00:00:00Z' },
+        { AmazonOrderId: 'gone', OrderStatus: 'Canceled', FulfillmentChannel: 'MFN', PurchaseDate: '2026-01-01T00:00:00Z' },
+      ],
+      '2026-02-01T00:00:00Z',
+    );
+    expect(r).toEqual({ sold: ['new'], cancelled: ['gone'], placedBefore: ['old'] });
   });
 });

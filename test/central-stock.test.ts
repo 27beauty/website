@@ -282,6 +282,76 @@ describe('once switched on', () => {
     expect(stockOf(4)).toBe(7);
   });
 
+  it('an order placed before switching on is not taken again when it is dispatched later', async () => {
+    world.ebayOrders['aisha-4515'] = [
+      {
+        orderId: '12-OLD',
+        creationDate: '2000-01-01T00:00:00.000Z', // already out of the starting count
+        lastModifiedDate: '2099-01-01T00:00:00.000Z', // dispatched after switching on
+        orderPaymentStatus: 'PAID',
+        cancelStatus: { cancelState: 'NONE_REQUESTED' },
+        lineItems: [{ lineItemId: 'L1', legacyItemId: '444', quantity: 1, title: 'Pukka' }],
+      },
+    ];
+    await runStockJob(env, new Date('2099-01-01T00:30:00Z'));
+    expect(stockOf(4)).toBe(7);
+    expect(sql.all(`SELECT COUNT(*) AS n FROM stock_movements WHERE reason = 'ebay_sale'`)).toEqual([{ n: 0 }]);
+  });
+
+  it('puts back, once, a sale that the old check counted twice — and a later cancellation adds nothing more', async () => {
+    const old = (state: string) => ({
+      orderId: '12-333',
+      creationDate: '2000-01-01T00:00:00.000Z',
+      lastModifiedDate: '2099-01-01T00:00:00.000Z',
+      orderPaymentStatus: 'PAID',
+      cancelStatus: { cancelState: state },
+      lineItems: [{ lineItemId: 'L3', legacyItemId: '444', quantity: 1, title: 'Pukka' }],
+    });
+    // What the old check did: took the pre-start order off again.
+    await adjustStock(env, [
+      { productId: 4, delta: -1, reason: 'ebay_sale', ref: 'ebay:12-333:L3', listing: { channel: 'ebay', account: 'aisha-4515', externalId: '444' } },
+    ]);
+    expect(stockOf(4)).toBe(6);
+
+    world.ebayOrders['aisha-4515'] = [old('NONE_REQUESTED')];
+    const first = await runStockJob(env, new Date('2099-01-01T00:30:00Z'));
+    expect(first.corrected).toBe(1);
+    expect(stockOf(4)).toBe(7);
+    await runStockJob(env, new Date('2099-01-01T00:35:00Z'));
+    expect(stockOf(4)).toBe(7);
+
+    world.ebayOrders['aisha-4515'] = [old('CANCELED')];
+    await runStockJob(env, new Date('2099-01-01T00:40:00Z'));
+    expect(stockOf(4)).toBe(7);
+    expect(sql.all(`SELECT reason, delta FROM stock_movements WHERE ref = 'ebay:12-333:L3' ORDER BY id`)).toEqual([
+      { reason: 'ebay_sale', delta: -1 },
+      { reason: 'correction', delta: 1 },
+    ]);
+  });
+
+  it('keeps reading a sale whose listing is not linked yet, and counts it once it is', async () => {
+    const modified = new Date(Date.now() - 60_000).toISOString();
+    world.ebayOrders['aisha-4515'] = [
+      {
+        orderId: '12-NEW',
+        creationDate: '2099-01-01T00:00:00.000Z',
+        lastModifiedDate: modified,
+        orderPaymentStatus: 'PAID',
+        cancelStatus: { cancelState: 'NONE_REQUESTED' },
+        lineItems: [{ lineItemId: 'L5', legacyItemId: '555', quantity: 1, title: 'Pukka relisted' }],
+      },
+    ];
+    await runStockJob(env, new Date('2099-01-01T00:30:00Z'));
+    expect(stockOf(4)).toBe(7);
+    // The cursor waits at the unlinked sale instead of moving past it.
+    expect(sql.all(`SELECT cursor FROM channel_cursors WHERE channel = 'ebay' AND account = 'aisha-4515'`)).toEqual([{ cursor: modified }]);
+
+    sql.exec(`INSERT INTO channel_listings (product_id, channel, account, external_id, title, status, channel_qty, pushed_qty)
+              VALUES (4, 'ebay', 'aisha-4515', '555', 'Pukka relisted', 'linked', 7, 7)`);
+    await runStockJob(env, new Date('2099-01-01T00:35:00Z'));
+    expect(stockOf(4)).toBe(6);
+  });
+
   it('an Amazon FBM sale comes off and updates eBay; FBA orders are ignored', async () => {
     world.amazonOrders = [
       { AmazonOrderId: '202-1', OrderStatus: 'Unshipped', FulfillmentChannel: 'MFN', LastUpdateDate: '2099-01-01T00:00:00Z' },

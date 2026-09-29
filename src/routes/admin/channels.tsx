@@ -121,7 +121,8 @@ channels.get('/', async (c) => {
         {lastRun ? (
           <p class="faint small">
             Last check {lastRun.at.slice(0, 16).replace('T', ' ')} UTC · {lastRun.sales} sale(s) · {lastRun.pushed} listing(s)
-            updated{lastRun.failed ? ` · ${lastRun.failed} failed` : ''}
+            updated{lastRun.corrected ? ` · ${lastRun.corrected} double-counted sale(s) put back` : ''}
+            {lastRun.failed ? ` · ${lastRun.failed} failed` : ''}
             {lastRun.left ? ` · ${lastRun.left} waiting` : ''}
             {lastRun.errors.length ? <span class="ch-error"> · {lastRun.errors.join(' · ')}</span> : null}
           </p>

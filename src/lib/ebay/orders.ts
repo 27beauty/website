@@ -20,6 +20,8 @@ interface RawLineItem {
 
 export interface RawEbayOrder {
   orderId?: string;
+  /** When the buyer placed it. Orders placed before counting started are already in the starting count. */
+  creationDate?: string;
   lastModifiedDate?: string;
   orderPaymentStatus?: string;
   cancelStatus?: { cancelState?: string };
@@ -33,18 +35,28 @@ export interface EbaySaleLine {
   quantity: number;
   title: string;
   cancelled: boolean;
+  placedAt: string | null;
+  lastModified: string | null;
 }
 
 /**
  * Flattens orders to lines. A payment that failed never took stock on eBay,
  * so it's skipped; a cancelled order is returned with `cancelled: true` so a
  * sale already counted can be put back.
+ *
+ * Orders are fetched by when they last *changed*, so an old order comes back
+ * when it's dispatched. With `placedAfter`, a sale placed before then is
+ * skipped: its quantity was already off eBay's count when the starting count
+ * was read, so taking it again would count it twice.
  */
-export function saleLines(orders: RawEbayOrder[]): EbaySaleLine[] {
+export function saleLines(orders: RawEbayOrder[], placedAfter?: string): EbaySaleLine[] {
   const out: EbaySaleLine[] = [];
+  const cutoff = placedAfter ? Date.parse(placedAfter) : NaN;
   for (const o of orders) {
     if (!o.orderId || o.orderPaymentStatus === 'FAILED') continue;
     const cancelled = o.cancelStatus?.cancelState === 'CANCELED';
+    const placed = o.creationDate ? Date.parse(o.creationDate) : NaN;
+    if (!cancelled && Number.isFinite(cutoff) && Number.isFinite(placed) && placed < cutoff) continue;
     for (const li of o.lineItems ?? []) {
       if (!li.lineItemId || !li.legacyItemId || !li.quantity || li.quantity < 1) continue;
       out.push({
@@ -54,6 +66,8 @@ export function saleLines(orders: RawEbayOrder[]): EbaySaleLine[] {
         quantity: li.quantity,
         title: li.title ?? '',
         cancelled,
+        placedAt: o.creationDate ?? null,
+        lastModified: o.lastModifiedDate ?? null,
       });
     }
   }

@@ -138,4 +138,5 @@ export const REASON_LABELS: Record<StockReason, string> = {
   admin: 'Changed in admin',
   start: 'Starting count',
   merge: 'Merged duplicate listing',
+  correction: 'Correction — sale counted twice, put back',
 };
