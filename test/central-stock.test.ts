@@ -44,6 +44,8 @@ interface FakeWorld {
   amazonOrders: unknown[];
   amazonItems: Record<string, unknown[]>;
   revised: { seller: string; itemId: string; quantity: number }[];
+  /** ListingStatus that GetItem reports per eBay item (default Active). */
+  itemStatus?: Record<string, string>;
   amazonPatched: { sku: string; quantity: number }[];
 }
 
@@ -70,6 +72,13 @@ function installFakeFetch(world: FakeWorld) {
       const seller = TOKEN_TO_SELLER[headers.get('X-EBAY-API-IAF-TOKEN') ?? ''];
       const call = headers.get('X-EBAY-API-CALL-NAME');
       if (call === 'GetMyeBaySelling') return new Response(activeListXml(world.ebayListings[seller] ?? []));
+      if (call === 'GetItem') {
+        const itemId = /<ItemID>(\d+)<\/ItemID>/.exec(body)?.[1] ?? '';
+        const status = world.itemStatus?.[itemId] ?? 'Active';
+        return new Response(
+          `<GetItemResponse><Ack>Success</Ack><Item><ItemID>${itemId}</ItemID><Quantity>3</Quantity><SellingStatus><QuantitySold>3</QuantitySold><ListingStatus>${status}</ListingStatus></SellingStatus></Item></GetItemResponse>`,
+        );
+      }
       if (call === 'ReviseInventoryStatus') {
         const echoed = [...body.matchAll(/<InventoryStatus><ItemID>(\d+)<\/ItemID><Quantity>(\d+)<\/Quantity><\/InventoryStatus>/g)];
         for (const m of echoed) world.revised.push({ seller, itemId: m[1], quantity: Number(m[2]) });
@@ -350,6 +359,30 @@ describe('once switched on', () => {
               VALUES (4, 'ebay', 'aisha-4515', '555', 'Pukka relisted', 'linked', 7, 7)`);
     await runStockJob(env, new Date('2099-01-01T00:35:00Z'));
     expect(stockOf(4)).toBe(6);
+  });
+
+  it('re-links a sold-out listing that was wrongly set aside as ended, and leaves a truly ended one alone', async () => {
+    // What the old ended-check did to a listing that had only sold out.
+    sql.exec(`UPDATE products SET status = 'archived' WHERE id IN (3, 4)`);
+    sql.exec(`UPDATE channel_listings SET status = 'ignored' WHERE channel = 'ebay' AND external_id IN ('333', '444')`);
+    world.itemStatus = { '333': 'Completed' }; // 444 is still Active at 0
+
+    const r = await runStockJob(env, new Date('2099-01-01T00:30:00Z'));
+    expect(r.revived).toBe(1);
+    expect(sql.all(`SELECT status, last_error FROM channel_listings WHERE external_id = '444'`)).toEqual([
+      { status: 'linked', last_error: null },
+    ]);
+    // Its website count wasn't kept while set aside, so it takes eBay's real
+    // quantity (sold out: 0) instead of pushing the stale 7 out.
+    expect(stockOf(4)).toBe(0);
+    expect(world.revised.find((x) => x.itemId === '444')).toBeUndefined();
+    expect(sql.all(`SELECT status FROM products WHERE id = 4`)).toEqual([{ status: 'active' }]);
+    // Ended for real: stays set aside, and is marked so it isn't checked again.
+    expect(sql.all(`SELECT status, last_error FROM channel_listings WHERE external_id = '333' AND channel = 'ebay'`)).toEqual([
+      { status: 'ignored', last_error: 'Ended on eBay' },
+    ]);
+    const again = await runStockJob(env, new Date('2099-01-01T00:35:00Z'));
+    expect(again.revived ?? 0).toBe(0);
   });
 
   it('an Amazon FBM sale comes off and updates eBay; FBA orders are ignored', async () => {

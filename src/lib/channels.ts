@@ -20,7 +20,7 @@ import { D1_IN_CHUNK, uniqueSlug } from './util';
 import { adjustStock, centralStockEnabled, setStock, type StockChange } from './stock';
 import { MatchIndex, exactDuplicateGroups, matchListing, type MatchCandidate } from './matching';
 import { getUserAccessToken, sellerConnected } from './ebay/oauth';
-import { getActiveListingsPage, reviseQuantities, REVISE_BATCH, type QuantityUpdate } from './ebay/trading';
+import { getActiveListingsPage, getItemStatus, reviseQuantities, REVISE_BATCH, type QuantityUpdate } from './ebay/trading';
 import { fetchModifiedOrders, newestModified, saleLines } from './ebay/orders';
 import {
   amazonConfigured,
@@ -858,8 +858,74 @@ export async function reconcileCountedSales(
   return { corrected: changes.length, complete, moved, errors };
 }
 
+/**
+ * Repair for eBay listings wrongly treated as ended: the sync used to ask the
+ * public Browse API, which says "not found" for a listing that sold out and
+ * was only hidden by Out-of-stock control. Those products were archived and
+ * their listings set aside. Each is checked with eBay as the seller; a live
+ * one is linked again and its product restored. Its website count wasn't kept
+ * while it was set aside, so it takes eBay's real quantity (a 'correction' in
+ * the history) rather than pushing a stale number out. A genuinely ended one
+ * is marked so it isn't checked again.
+ */
+export async function reviveSoldOutListings(env: Env, budget: Budget): Promise<{ revived: number; errors: string[] }> {
+  const { results } = await env.DB.prepare(
+    `SELECT l.id, l.account, l.external_id, p.id AS product_id
+       FROM channel_listings l JOIN products p ON p.id = l.product_id
+      WHERE l.channel = 'ebay' AND l.status = 'ignored' AND p.status = 'archived' AND p.merged_into IS NULL
+        AND p.source = 'ebay' AND COALESCE(l.last_error, '') != ?
+      ORDER BY l.id LIMIT 40`,
+  )
+    .bind(ENDED_ON_EBAY)
+    .all<{ id: number; account: string; external_id: string; product_id: number }>();
+  const rows = results ?? [];
+  if (!rows.length) return { revived: 0, errors: [] };
+  const accounts = new Map((await connectedEbayAccounts(env)).map((a) => [accountKey(a), a]));
+  const tokens = new Map<string, string | null>();
+  const statements: D1PreparedStatement[] = [];
+  const counts: { productId: number; quantity: number }[] = [];
+  const errors: string[] = [];
+  let revived = 0;
+  for (const r of rows) {
+    const account = accounts.get(r.account);
+    if (!account) continue;
+    if (!tokens.has(r.account)) tokens.set(r.account, await getUserAccessToken(env, account));
+    const token = tokens.get(r.account);
+    if (!token || !budget.take()) break;
+    try {
+      const s = await getItemStatus(token, r.external_id);
+      if (s.state === 'live') {
+        revived++;
+        if (s.quantityAvailable !== null) counts.push({ productId: r.product_id, quantity: s.quantityAvailable });
+        statements.push(
+          env.DB.prepare(
+            `UPDATE channel_listings SET status = 'linked', channel_qty = ?, pushed_qty = ?, last_error = NULL, updated_at = datetime('now') WHERE id = ?`,
+          ).bind(s.quantityAvailable, s.quantityAvailable, r.id),
+          env.DB.prepare(
+            `UPDATE products SET status = CASE WHEN price_pence > 0 THEN 'active' ELSE 'draft' END, updated_at = datetime('now') WHERE id = ?`,
+          ).bind(r.product_id),
+        );
+      } else if (s.state === 'ended') {
+        statements.push(env.DB.prepare(`UPDATE channel_listings SET last_error = ? WHERE id = ?`).bind(ENDED_ON_EBAY, r.id));
+      }
+    } catch (err) {
+      errors.push(`Checking eBay item ${r.external_id}: ${errorText(err)}`);
+    }
+  }
+  if (statements.length) await env.DB.batch(statements);
+  if (counts.length) {
+    await setStock(env, counts, 'correction', "Re-linked eBay listing: set to eBay's quantity (it had been set aside by mistake)");
+  }
+  return { revived, errors };
+}
+
+/** Marks a set-aside listing that eBay confirmed has ended, so it's never re-checked. */
+const ENDED_ON_EBAY = 'Ended on eBay';
+
 export interface StockJobSummary {
   at: string;
+  /** eBay listings found live after being wrongly set aside as ended (see reviveSoldOutListings). */
+  revived?: number;
   /** Sales put back by the one-off reconciliation (see reconcileCountedSales). */
   corrected?: number;
   merged: number;
@@ -891,6 +957,13 @@ export async function runStockJob(env: Env, now = new Date()): Promise<StockJobS
   const enabled = await centralStockEnabled(env);
   if (enabled) {
     const since = (await getSetting<string | null>(env, 'stock.enabled_at', null)) ?? now.toISOString();
+    try {
+      const r = await reviveSoldOutListings(env, budget);
+      if (r.revived) summary.revived = r.revived;
+      summary.errors.push(...r.errors);
+    } catch (err) {
+      summary.errors.push(`Revive: ${errorText(err)}`);
+    }
     if (!(await getSetting<boolean>(env, 'stock.reconciled_v1', false))) {
       try {
         const r = await reconcileCountedSales(env, budget, since);

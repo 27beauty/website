@@ -7,6 +7,8 @@ import { normaliseTitle } from '../matching';
 import { fetchBrowseListings, listingState } from './browse';
 import { diffListings, locksFromRow, resolveUpdateFields, type ExistingProductRow, type ListingDiff } from './diff';
 import { Budget, EbayRateLimitError } from './http';
+import { getUserAccessToken } from './oauth';
+import { getItemStatus } from './trading';
 import { fetchSellListings } from './inventory';
 import { loadCategoryRules, mapCategory } from './mapping';
 import type { CategoryRule, NormalisedListing } from './types';
@@ -372,12 +374,25 @@ async function reconcileEndedListings(
       Number(looksRelisted(b)) - Number(looksRelisted(a)) || (a.ebay_synced_at ?? '').localeCompare(b.ebay_synced_at ?? ''),
   );
 
+  // With the shop connected, ask eBay as the seller: the public Browse API
+  // says "not found" for a sold-out listing that Out-of-stock control has only
+  // hidden, which would archive a live listing.
+  let sellerToken: string | null = null;
+  if (missing.length) {
+    try {
+      sellerToken = await getUserAccessToken(env, account);
+    } catch {
+      sellerToken = null;
+    }
+  }
   const ended: ExistingProductRow[] = [];
   for (const row of missing) {
     if (!budget.take()) break; // the rest are checked on later runs, least recently confirmed first
     let state;
     try {
-      state = await listingState(env, account, row.ebay_item_id as string);
+      state = sellerToken
+        ? (await getItemStatus(sellerToken, bareItemId(row.ebay_item_id as string))).state
+        : await listingState(env, account, row.ebay_item_id as string);
     } catch (err) {
       if (err instanceof EbayRateLimitError) break;
       errors.push(`Account "${account.label}": could not check whether "${row.title}" has ended: ${errorMessage(err)}`);

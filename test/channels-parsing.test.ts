@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildReviseInventoryStatus, parseActiveList, parseReviseResponse, tagText } from '../src/lib/ebay/trading';
+import { buildReviseInventoryStatus, parseActiveList, parseItemStatus, parseReviseResponse, tagText } from '../src/lib/ebay/trading';
 import { saleLines } from '../src/lib/ebay/orders';
 import { classifyOrders, mapListing } from '../src/lib/amazon/spapi';
 import { planEbayBatches } from '../src/lib/channels';
@@ -143,5 +143,22 @@ describe('orders placed before counting started', () => {
       '2026-02-01T00:00:00Z',
     );
     expect(r).toEqual({ sold: ['new'], cancelled: ['gone'], placedBefore: ['old'] });
+  });
+});
+
+describe('eBay listing status (GetItem)', () => {
+  const xml = (status: string, qty = 5, sold = 2) =>
+    `<GetItemResponse><Ack>Success</Ack><Item><Quantity>${qty}</Quantity><SellingStatus><QuantitySold>${sold}</QuantitySold><ListingStatus>${status}</ListingStatus></SellingStatus></Item></GetItemResponse>`;
+  it('treats an Active listing as live even when it has sold out', () => {
+    expect(parseItemStatus(xml('Active'))).toEqual({ state: 'live', quantityAvailable: 3 });
+    expect(parseItemStatus(xml('Active', 4, 4))).toEqual({ state: 'live', quantityAvailable: 0 });
+  });
+  it('treats Completed or Ended, or an item eBay no longer has, as ended', () => {
+    expect(parseItemStatus(xml('Completed')).state).toBe('ended');
+    expect(parseItemStatus(xml('Ended')).state).toBe('ended');
+    expect(parseItemStatus('<GetItemResponse><Ack>Failure</Ack><Errors><ErrorCode>17</ErrorCode><SeverityCode>Error</SeverityCode><LongMessage>Item cannot be accessed.</LongMessage></Errors></GetItemResponse>').state).toBe('ended');
+  });
+  it('is unsure about anything else', () => {
+    expect(parseItemStatus('<GetItemResponse><Ack>Failure</Ack></GetItemResponse>').state).toBe('unknown');
   });
 });

@@ -88,7 +88,7 @@ export async function adjustStock(env: Env, changes: StockChange[]): Promise<num
 export async function setStock(
   env: Env,
   updates: { productId: number; quantity: number }[],
-  reason: Extract<StockReason, 'admin' | 'start' | 'merge'>,
+  reason: Extract<StockReason, 'admin' | 'start' | 'merge' | 'correction'>,
   note?: string,
 ): Promise<number[]> {
   if (!updates.length) return [];

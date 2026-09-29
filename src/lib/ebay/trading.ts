@@ -74,9 +74,9 @@ async function tradingCall(token: string, call: string, innerXml: string): Promi
   if (!res.ok) throw new Error(`eBay ${call}: HTTP ${res.status}`);
   const ack = tagText(text, 'Ack');
   if (ack === 'Failure' || ack === 'PartialFailure') {
-    // ReviseInventoryStatus reports per-item failures this way; callers that
-    // can use a partial result parse it themselves.
-    if (call !== 'ReviseInventoryStatus') {
+    // ReviseInventoryStatus reports per-item failures this way, and GetItem's
+    // "no such item" is an answer, not an error; those callers parse it themselves.
+    if (call !== 'ReviseInventoryStatus' && call !== 'GetItem') {
       const errs = tradingErrors(text).filter((e) => e.severity !== 'Warning');
       throw new Error(`eBay ${call}: ${errs.map((e) => e.message).join('; ') || ack}`);
     }
@@ -186,4 +186,37 @@ export async function outOfStockControlEnabled(token: string): Promise<boolean> 
 export async function tokenUserId(token: string): Promise<string | null> {
   const xml = await tradingCall(token, 'GetUser', '');
   return tagText(tagText(xml, 'User') ?? '', 'UserID');
+}
+
+// ---------------------------------------------------------------------------
+// GetItem — is a listing still live?
+// ---------------------------------------------------------------------------
+
+export type SellerListingState = 'live' | 'ended' | 'unknown';
+
+/**
+ * A listing's real status from the seller's side. The public Browse API
+ * can't tell a sold-out listing (hidden by Out-of-stock control, still live)
+ * from an ended one — both are "not found" there. This can: an Active listing
+ * at 0 is live.
+ */
+export function parseItemStatus(xml: string): { state: SellerListingState; quantityAvailable: number | null } {
+  const errors = tradingErrors(xml).filter((e) => e.severity !== 'Warning');
+  // 17: the item doesn't exist, or it ended long enough ago to be removed.
+  if (errors.some((e) => e.code === '17')) return { state: 'ended', quantityAvailable: null };
+  const status = tagText(tagText(xml, 'SellingStatus') ?? '', 'ListingStatus');
+  if (!status) return { state: 'unknown', quantityAvailable: null };
+  const quantity = Number(tagText(xml, 'Quantity') ?? NaN);
+  const sold = Number(tagText(tagText(xml, 'SellingStatus') ?? '', 'QuantitySold') ?? 0);
+  const available = Number.isFinite(quantity) ? Math.max(0, quantity - (Number.isFinite(sold) ? sold : 0)) : null;
+  return { state: status === 'Active' ? 'live' : 'ended', quantityAvailable: available };
+}
+
+export async function getItemStatus(token: string, itemId: string) {
+  const xml = await tradingCall(
+    token,
+    'GetItem',
+    `<ItemID>${escapeXml(itemId)}</ItemID><OutputSelector>Item.ItemID</OutputSelector><OutputSelector>Item.Quantity</OutputSelector><OutputSelector>Item.SellingStatus</OutputSelector>`,
+  );
+  return parseItemStatus(xml);
 }
