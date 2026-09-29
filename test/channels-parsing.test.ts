@@ -162,3 +162,20 @@ describe('eBay listing status (GetItem)', () => {
     expect(parseItemStatus('<GetItemResponse><Ack>Failure</Ack></GetItemResponse>').state).toBe('unknown');
   });
 });
+
+describe('ReviseInventoryStatus: quantity already set', () => {
+  it("counts a listing eBay didn't change because it already shows that quantity as done", () => {
+    const xml = `<ReviseInventoryStatusResponse><Ack>Warning</Ack>
+      <Errors><ErrorCode>21917092</ErrorCode><SeverityCode>Warning</SeverityCode><LongMessage>The existing quantity value is identical to the quantity specified in the request and, therefore, has not modified.</LongMessage></Errors>
+      <InventoryStatus><ItemID>2</ItemID><Quantity>4</Quantity></InventoryStatus>
+    </ReviseInventoryStatusResponse>`;
+    const r = parseReviseResponse(xml, [{ itemId: '1', quantity: 3 }, { itemId: '2', quantity: 4 }]);
+    expect([...r.ok].sort()).toEqual(['1', '2']);
+    expect(r.failed.size).toBe(0);
+  });
+
+  it('still reports a real error', () => {
+    const xml = `<ReviseInventoryStatusResponse><Ack>Failure</Ack><Errors><ErrorCode>21919188</ErrorCode><SeverityCode>Error</SeverityCode><LongMessage>Listing 1 has ended.</LongMessage></Errors></ReviseInventoryStatusResponse>`;
+    expect(parseReviseResponse(xml, [{ itemId: '1', quantity: 3 }]).failed.get('1')).toMatch(/has ended/);
+  });
+});

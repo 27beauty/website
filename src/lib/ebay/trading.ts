@@ -17,6 +17,8 @@ const TRADING_URL = 'https://api.ebay.com/ws/api.dll';
 const SITE_ID_UK = '3';
 const COMPAT_LEVEL = '1349';
 export const REVISE_BATCH = 4;
+/** eBay warning: the listing already shows the quantity sent, so nothing was changed. */
+const QUANTITY_ALREADY_SET = '21917092';
 
 function escapeXml(s: string): string {
   return s.replace(/[<>&'"]/g, (ch) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' })[ch] as string);
@@ -115,9 +117,16 @@ export function parseReviseResponse(xml: string, sent: QuantityUpdate[]): { ok: 
     const echoed = [...ok].join(', ') || 'none';
     return `eBay did not confirm this listing (Ack ${tagText(xml, 'Ack') ?? '?'}; confirmed: ${echoed}${warnings ? `; eBay said: ${warnings}` : ''})`.slice(0, 500);
   };
+  // 21917092: "the existing quantity is identical … not modified". eBay
+  // doesn't echo a listing that already shows that number; it's a success.
+  const unchanged = errors.length === 0 && all.some((e) => e.code === QUANTITY_ALREADY_SET);
   const failed = new Map<string, string>();
   for (const u of sent) {
     if (ok.has(u.itemId)) continue;
+    if (unchanged) {
+      ok.add(u.itemId);
+      continue;
+    }
     const specific = errors.find((e) => e.message.includes(u.itemId));
     const e = specific ?? errors[0];
     failed.set(u.itemId, e ? `${e.message}${e.code ? ` (eBay error ${e.code})` : ''}` : unexplained());
