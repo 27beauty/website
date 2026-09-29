@@ -106,12 +106,21 @@ export function buildReviseInventoryStatus(updates: QuantityUpdate[]): string {
  */
 export function parseReviseResponse(xml: string, sent: QuantityUpdate[]): { ok: Set<string>; failed: Map<string, string> } {
   const ok = new Set(tagBlocks(xml, 'InventoryStatus').map((b) => tagText(b, 'ItemID')).filter((x): x is string => Boolean(x)));
-  const errors = tradingErrors(xml).filter((e) => e.severity !== 'Warning');
+  const all = tradingErrors(xml);
+  const errors = all.filter((e) => e.severity !== 'Warning');
+  // With no error, say what eBay did send back (warnings, or the Ack and
+  // what it echoed), so a silent refusal can be diagnosed from the Stock screen.
+  const unexplained = () => {
+    const warnings = all.map((e) => `${e.code ?? ''} ${e.message}`.trim()).join('; ');
+    const echoed = [...ok].join(', ') || 'none';
+    return `eBay did not confirm this listing (Ack ${tagText(xml, 'Ack') ?? '?'}; confirmed: ${echoed}${warnings ? `; eBay said: ${warnings}` : ''})`.slice(0, 500);
+  };
   const failed = new Map<string, string>();
   for (const u of sent) {
     if (ok.has(u.itemId)) continue;
     const specific = errors.find((e) => e.message.includes(u.itemId));
-    failed.set(u.itemId, (specific ?? errors[0])?.message ?? 'eBay did not confirm this listing');
+    const e = specific ?? errors[0];
+    failed.set(u.itemId, e ? `${e.message}${e.code ? ` (eBay error ${e.code})` : ''}` : unexplained());
   }
   return { ok, failed };
 }
