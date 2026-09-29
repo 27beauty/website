@@ -28,10 +28,14 @@ import {
   fetchOrderLines,
   fetchUpdatedOrders,
   newestUpdate,
+  AmazonThrottledError,
+  getListingDetails,
   searchListingsPage,
   setMerchantQuantity,
   type CallCounter,
 } from './amazon/spapi';
+import { normalisePriceTiers, websitePriceFromEbay } from './money';
+import { loadCategoryRules, mapCategory } from './ebay/mapping';
 
 // ---------------------------------------------------------------------------
 // Budget
@@ -919,11 +923,89 @@ export async function reviveSoldOutListings(env: Env, budget: Budget): Promise<{
   return { revived, errors };
 }
 
+/**
+ * Reads each Amazon listing's price, main photo and description (one request
+ * each, a few per run) for the listings that need them: ones waiting in
+ * Review matches, so matching has more than a title, and ones behind a draft
+ * product, which the details then fill in — price less the owner's price
+ * bands, photo, description and a category from the sync's keyword rules.
+ * Anything the owner already set is kept. Each listing is read once.
+ */
+export async function fillAmazonDetails(env: Env, budget: Budget, max = 20): Promise<{ read: number; filled: number; errors: string[] }> {
+  const { results } = await env.DB.prepare(
+    `SELECT l.id, l.external_id, l.title, l.product_id, p.status AS product_status
+       FROM channel_listings l LEFT JOIN products p ON p.id = l.product_id
+      WHERE l.channel = 'amazon' AND l.details_checked_at IS NULL
+        AND (l.status = 'review' OR (l.status = 'linked' AND p.status = 'draft' AND p.merged_into IS NULL))
+      ORDER BY (l.status = 'linked') DESC, l.id
+      LIMIT ?`,
+  )
+    .bind(max)
+    .all<{ id: number; external_id: string; title: string; product_id: number | null; product_status: string | null }>();
+  const rows = results ?? [];
+  if (!rows.length) return { read: 0, filled: 0, errors: [] };
+  const [tiers, rules] = await Promise.all([
+    getSetting<unknown>(env, 'ebay.price_tiers', []).then(normalisePriceTiers),
+    loadCategoryRules(env),
+  ]);
+  const counter: CallCounter = { calls: 0 };
+  const statements: D1PreparedStatement[] = [];
+  const errors: string[] = [];
+  let read = 0;
+  let filled = 0;
+  for (const r of rows) {
+    if (!budget.take()) break;
+    let d: { pricePence: number | null; imageUrl: string | null; description: string | null };
+    try {
+      d = await getListingDetails(env, counter, r.external_id);
+    } catch (err) {
+      if (err instanceof AmazonThrottledError) break; // Amazon's rate limit: the rest next run
+      errors.push(`Amazon ${r.external_id}: ${errorText(err)}`);
+      d = { pricePence: null, imageUrl: null, description: null };
+    }
+    read++;
+    statements.push(
+      env.DB.prepare(
+        `UPDATE channel_listings SET price_pence = ?, image_url = ?, description = ?, details_checked_at = datetime('now') WHERE id = ?`,
+      ).bind(d.pricePence, d.imageUrl, d.description, r.id),
+    );
+    if (r.product_id && r.product_status === 'draft') {
+      filled++;
+      const price = d.pricePence ? websitePriceFromEbay(d.pricePence, 0, tiers) : null;
+      statements.push(
+        env.DB.prepare(
+          `UPDATE products SET
+             price_pence = CASE WHEN price_pence <= 0 AND ? IS NOT NULL THEN ? ELSE price_pence END,
+             image_url = COALESCE(image_url, ?),
+             images_json = CASE WHEN (images_json IS NULL OR images_json IN ('', '[]')) AND ? IS NOT NULL THEN ? ELSE images_json END,
+             description = COALESCE(NULLIF(trim(description), ''), ?),
+             category_id = COALESCE(category_id, ?),
+             updated_at = datetime('now')
+           WHERE id = ?`,
+        ).bind(
+          price,
+          price,
+          d.imageUrl,
+          d.imageUrl,
+          d.imageUrl ? JSON.stringify([d.imageUrl]) : null,
+          d.description,
+          mapCategory({ title: r.title }, rules, null),
+          r.product_id,
+        ),
+      );
+    }
+  }
+  for (let i = 0; i < statements.length; i += 50) await env.DB.batch(statements.slice(i, i + 50));
+  return { read, filled, errors };
+}
+
 /** Marks a set-aside listing that eBay confirmed has ended, so it's never re-checked. */
 const ENDED_ON_EBAY = 'Ended on eBay';
 
 export interface StockJobSummary {
   at: string;
+  /** Amazon drafts filled in from their listing's details this run. */
+  filled?: number;
   /** eBay listings found live after being wrongly set aside as ended (see reviveSoldOutListings). */
   revived?: number;
   /** Sales put back by the one-off reconciliation (see reconcileCountedSales). */
@@ -999,6 +1081,16 @@ export async function runStockJob(env: Env, now = new Date()): Promise<StockJobS
       summary.left = p.left;
     } catch (err) {
       summary.errors.push(`Push: ${errorText(err)}`);
+    }
+  }
+
+  if (amazonConfigured(env) && budget.remaining >= 3) {
+    try {
+      const r = await fillAmazonDetails(env, budget, Math.min(20, budget.remaining - 1));
+      if (r.filled) summary.filled = r.filled;
+      summary.errors.push(...r.errors.slice(0, 3));
+    } catch (err) {
+      summary.errors.push(`Amazon details: ${errorText(err)}`);
     }
   }
 

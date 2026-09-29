@@ -44,6 +44,8 @@ interface FakeWorld {
   amazonOrders: unknown[];
   amazonItems: Record<string, unknown[]>;
   revised: { seller: string; itemId: string; quantity: number }[];
+  /** getListingsItem (summaries, offers, attributes) per Amazon SKU. */
+  amazonDetails?: Record<string, unknown>;
   /** ListingStatus that GetItem reports per eBay item (default Active). */
   itemStatus?: Record<string, string>;
   amazonPatched: { sku: string; quantity: number }[];
@@ -95,6 +97,10 @@ function installFakeFetch(world: FakeWorld) {
     if (url.host === 'sellingpartnerapi-eu.amazon.com') {
       if (url.pathname === `/listings/2021-08-01/items/${SELLER}` && (init.method ?? 'GET') === 'GET') {
         return Response.json({ items: world.amazonListings });
+      }
+      if (url.pathname.startsWith(`/listings/2021-08-01/items/${SELLER}/`) && (init.method ?? 'GET') === 'GET') {
+        const sku = decodeURIComponent(url.pathname.split('/').pop() as string);
+        return Response.json(world.amazonDetails?.[sku] ?? {});
       }
       if (url.pathname.startsWith(`/listings/2021-08-01/items/${SELLER}/`) && init.method === 'PATCH') {
         const sku = decodeURIComponent(url.pathname.split('/').pop() as string);
@@ -383,6 +389,41 @@ describe('once switched on', () => {
     ]);
     const again = await runStockJob(env, new Date('2099-01-01T00:35:00Z'));
     expect(again.revived ?? 0).toBe(0);
+  });
+
+  it("fills an Amazon draft with Amazon's price less the bands, photo, description and category — once, keeping what's set", async () => {
+    sql.exec(`
+      INSERT INTO settings (key, value) VALUES ('ebay.price_tiers', '[{"underPence":1000,"offPence":70}]');
+      INSERT INTO categories (id, slug, name) VALUES (50, 'coffee-tea', 'Coffee & Tea');
+      INSERT INTO ebay_category_map (match_type, match_value, category_id, priority) VALUES ('keyword', 'tea', 50, 10);
+      INSERT INTO products (id, slug, title, price_pence, stock, status, source) VALUES (60, 'pukka-4', 'Pukka Peace Organic Herbal Tea 4 x 20', 0, 4, 'draft', 'manual');
+    `);
+    sql.exec(`UPDATE channel_listings SET product_id = 60, status = 'linked' WHERE external_id = 'AMZ-PUK4'`);
+    world.amazonDetails = {
+      'AMZ-PUK4': {
+        summaries: [{ marketplaceId: 'A1F83G8C2ARO7P', mainImage: { link: 'https://m.media-amazon.com/images/I/pukka.jpg' } }],
+        offers: [{ marketplaceId: 'A1F83G8C2ARO7P', offerType: 'B2C', price: { currencyCode: 'GBP', amount: '8.99' } }],
+        attributes: {
+          product_description: [{ value: '<p>Calming chamomile &amp; spearmint.</p>', marketplace_id: 'A1F83G8C2ARO7P' }],
+          bullet_point: [{ value: '80 tea bags', marketplace_id: 'A1F83G8C2ARO7P' }],
+        },
+      },
+    };
+    const r = await runStockJob(env, new Date('2099-01-01T00:30:00Z'));
+    expect(r.filled).toBe(1);
+    expect(sql.all(`SELECT price_pence, image_url, description, category_id, status FROM products WHERE id = 60`)).toEqual([
+      {
+        price_pence: 829, // £8.99 on Amazon, less 70p for "under £10"
+        image_url: 'https://m.media-amazon.com/images/I/pukka.jpg',
+        description: 'Calming chamomile & spearmint.\n\n• 80 tea bags',
+        category_id: 50,
+        status: 'draft', // still the owner's call to publish
+      },
+    ]);
+    // Read once: a price the owner then sets isn't overwritten.
+    sql.exec(`UPDATE products SET price_pence = 750 WHERE id = 60`);
+    await runStockJob(env, new Date('2099-01-01T00:35:00Z'));
+    expect(sql.all(`SELECT price_pence FROM products WHERE id = 60`)).toEqual([{ price_pence: 750 }]);
   });
 
   it('an Amazon FBM sale comes off and updates eBay; FBA orders are ignored', async () => {

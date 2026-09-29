@@ -123,6 +123,7 @@ channels.get('/', async (c) => {
             Last check {lastRun.at.slice(0, 16).replace('T', ' ')} UTC · {lastRun.sales} sale(s) · {lastRun.pushed} listing(s)
             updated{lastRun.corrected ? ` · ${lastRun.corrected} double-counted sale(s) put back` : ''}
             {lastRun.revived ? ` · ${lastRun.revived} sold-out listing(s) re-linked` : ''}
+            {lastRun.filled ? ` · ${lastRun.filled} Amazon draft(s) filled in` : ''}
             {lastRun.failed ? ` · ${lastRun.failed} failed` : ''}
             {lastRun.left ? ` · ${lastRun.left} waiting` : ''}
             {lastRun.errors.length ? <span class="ch-error"> · {lastRun.errors.join(' · ')}</span> : null}
@@ -507,8 +508,10 @@ channels.get('/review', async (c) => {
                 : `One shared count: this ${where} listing's quantity will follow the website's.`;
           const newEffect =
             kind === 'fba'
-              ? 'Draft product at £0 and no stock. Add a price and photo before publishing.'
-              : `Draft product starting at ${l.channel_qty ?? 0} in stock, shared with this listing.`;
+              ? "Draft product with no stock (Amazon holds it). Its price, photo and description are filled in from Amazon within a few minutes."
+              : kind === 'fbm'
+                ? `Draft product starting at ${l.channel_qty ?? 0} in stock, shared with this listing. Price, photo and description follow from Amazon within minutes.`
+                : `Draft product starting at ${l.channel_qty ?? 0} in stock, shared with this listing.`;
           return (
             <li class="admin-panel">
               <div class="ch-review-head">

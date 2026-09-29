@@ -170,9 +170,9 @@ settings.get('/', async (c) => {
             <label for="parcel2go_enabled">Book shipping with Parcel2Go from order pages</label>
           </div>
         </div>
-        <h3>Website prices for eBay items</h3>
+        <h3>Website prices for eBay and Amazon items</h3>
         <p class="muted">
-          Take a set amount off the eBay price, by price band. An item goes in the first band its eBay price is under.
+          Take a set amount off the eBay or Amazon price, by price band. An item goes in the first band its marketplace price is under. Amazon prices are used for products added from Amazon.
           A price you change on a product's page is locked and never overwritten. Changes apply at the next eBay sync.
         </p>
         <div class="tier-list">

@@ -233,6 +233,11 @@ export interface ChannelListing {
   pushed_qty: number | null;
   pushed_at: string | null;
   last_error: string | null;
+  /** Read from the listing itself (Amazon): its price, main photo and description. */
+  price_pence: number | null;
+  image_url: string | null;
+  description: string | null;
+  details_checked_at: string | null;
   created_at: string;
   updated_at: string;
 }

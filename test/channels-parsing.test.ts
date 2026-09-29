@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildReviseInventoryStatus, parseActiveList, parseItemStatus, parseReviseResponse, tagText } from '../src/lib/ebay/trading';
 import { saleLines } from '../src/lib/ebay/orders';
-import { classifyOrders, mapListing } from '../src/lib/amazon/spapi';
+import { classifyOrders, mapListing, mapListingDetails } from '../src/lib/amazon/spapi';
 import { planEbayBatches } from '../src/lib/channels';
 import { decryptSecret, encryptSecret } from '../src/lib/crypto';
 
@@ -177,5 +177,24 @@ describe('ReviseInventoryStatus: quantity already set', () => {
   it('still reports a real error', () => {
     const xml = `<ReviseInventoryStatusResponse><Ack>Failure</Ack><Errors><ErrorCode>21919188</ErrorCode><SeverityCode>Error</SeverityCode><LongMessage>Listing 1 has ended.</LongMessage></Errors></ReviseInventoryStatusResponse>`;
     expect(parseReviseResponse(xml, [{ itemId: '1', quantity: 3 }]).failed.get('1')).toMatch(/has ended/);
+  });
+});
+
+describe('Amazon listing details', () => {
+  it('reads the UK price, main photo and description', () => {
+    expect(
+      mapListingDetails({
+        summaries: [{ marketplaceId: 'A1F83G8C2ARO7P', mainImage: { link: 'https://m.media-amazon.com/x.jpg' } }],
+        offers: [
+          { marketplaceId: 'A1PA6795UKMFR9', offerType: 'B2C', price: { currencyCode: 'EUR', amount: '11.00' } },
+          { marketplaceId: 'A1F83G8C2ARO7P', offerType: 'B2C', price: { currencyCode: 'GBP', amount: '9.5' } },
+        ],
+        attributes: { bullet_point: [{ value: 'Vegan', marketplace_id: 'A1F83G8C2ARO7P' }, { value: 'Made in UK', marketplace_id: 'A1F83G8C2ARO7P' }] },
+      }),
+    ).toEqual({ pricePence: 950, imageUrl: 'https://m.media-amazon.com/x.jpg', description: '• Vegan\n• Made in UK' });
+  });
+
+  it('copes with a listing that has none of them', () => {
+    expect(mapListingDetails({})).toEqual({ pricePence: null, imageUrl: null, description: null });
   });
 });

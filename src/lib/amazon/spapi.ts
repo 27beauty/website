@@ -14,6 +14,8 @@
 import type { Env } from '../../types';
 
 const LWA_TOKEN_URL = 'https://api.amazon.com/auth/o2/token';
+import { htmlToText } from '../util';
+
 const SP_API = 'https://sellingpartnerapi-eu.amazon.com';
 export const UK_MARKETPLACE = 'A1F83G8C2ARO7P';
 const TOKEN_KV_KEY = 'amazon:lwa-token';
@@ -134,6 +136,52 @@ export async function searchListingsPage(
     listings: (json.items ?? []).map(mapListing).filter((l): l is AmazonListing => l !== null),
     nextToken: json.pagination?.nextToken ?? null,
   };
+}
+
+export interface AmazonListingDetails {
+  pricePence: number | null;
+  imageUrl: string | null;
+  description: string | null;
+}
+
+interface RawListingDetails {
+  summaries?: { marketplaceId?: string; mainImage?: { link?: string } }[];
+  offers?: { marketplaceId?: string; offerType?: string; price?: { amount?: string | number; currency?: string; currencyCode?: string } }[];
+  attributes?: {
+    product_description?: { value?: string; marketplace_id?: string }[];
+    bullet_point?: { value?: string; marketplace_id?: string }[];
+  };
+}
+
+/** Price, main photo and description from one listing's details. Pure, for testing. */
+export function mapListingDetails(raw: RawListingDetails): AmazonListingDetails {
+  const uk = <T extends { marketplaceId?: string; marketplace_id?: string }>(list: T[] | undefined) =>
+    (list ?? []).filter((x) => !(x.marketplaceId ?? x.marketplace_id) || (x.marketplaceId ?? x.marketplace_id) === UK_MARKETPLACE);
+  const offer = uk(raw.offers).find((o) => !o.offerType || o.offerType === 'B2C');
+  const currency = offer?.price?.currencyCode ?? offer?.price?.currency;
+  const amount = Number(offer?.price?.amount);
+  const pricePence = (!currency || currency === 'GBP') && Number.isFinite(amount) && amount > 0 ? Math.round(amount * 100) : null;
+  const imageUrl = uk(raw.summaries).find((s) => s.mainImage?.link)?.mainImage?.link ?? null;
+  const text = uk(raw.attributes?.product_description)
+    .map((d) => htmlToText(d.value))
+    .find(Boolean);
+  const bullets = uk(raw.attributes?.bullet_point)
+    .map((b) => htmlToText(b.value))
+    .filter(Boolean)
+    .map((b) => `• ${b}`);
+  const description = [text, bullets.join('\n')].filter(Boolean).join('\n\n') || null;
+  return { pricePence, imageUrl, description };
+}
+
+/** One listing's price, main photo and description (one request). */
+export async function getListingDetails(env: Env, counter: CallCounter, sku: string): Promise<AmazonListingDetails> {
+  const params = new URLSearchParams({ marketplaceIds: UK_MARKETPLACE, includedData: 'summaries,offers,attributes' });
+  const raw = await sp<RawListingDetails>(
+    env,
+    counter,
+    `/listings/2021-08-01/items/${encodeURIComponent(env.AMAZON_SELLER_ID as string)}/${encodeURIComponent(sku)}?${params.toString()}`,
+  );
+  return mapListingDetails(raw);
 }
 
 export async function setMerchantQuantity(env: Env, counter: CallCounter, sku: string, quantity: number): Promise<void> {
