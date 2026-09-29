@@ -46,6 +46,8 @@ interface AdminProductQuery {
   status?: string;
   source?: string;
   lowStock?: boolean;
+  /** Where it's listed: 'ebay', 'amazon', or 'website' (on no marketplace). */
+  listed?: string;
   sort?: string;
   page: number;
 }
@@ -54,7 +56,9 @@ async function queryAdminProducts(
   env: Env,
   q: AdminProductQuery,
 ): Promise<{ items: ProductWithCategory[]; total: number }> {
-  const where: string[] = [];
+  // One row per item: a duplicate folded into another product (merged_into)
+  // is shown through the product it was merged into, never on its own.
+  const where: string[] = ['p.merged_into IS NULL'];
   const params: unknown[] = [];
   if (q.status) {
     where.push('p.status = ?');
@@ -69,10 +73,18 @@ async function queryAdminProducts(
     params.push(q.source);
   }
   if (q.lowStock) where.push('p.stock <= 3');
+  const onChannel = (channel: string) =>
+    `EXISTS (SELECT 1 FROM channel_listings l WHERE l.product_id = p.id AND l.status = 'linked' AND l.channel = '${channel}')`;
+  if (q.listed === 'ebay') where.push(onChannel('ebay'));
+  if (q.listed === 'amazon') where.push(onChannel('amazon'));
+  if (q.listed === 'website') where.push(`NOT EXISTS (SELECT 1 FROM channel_listings l WHERE l.product_id = p.id AND l.status = 'linked')`);
   if (q.q && q.q.trim()) {
     const term = `%${q.q.trim().toLowerCase()}%`;
-    where.push('(lower(p.title) LIKE ? OR lower(p.sku) LIKE ? OR lower(p.brand) LIKE ?)');
-    params.push(term, term, term);
+    // Also finds a product by its Amazon SKU / ASIN or eBay item number.
+    where.push(`(lower(p.title) LIKE ? OR lower(p.sku) LIKE ? OR lower(p.brand) LIKE ? OR lower(p.ebay_sku) LIKE ?
+      OR EXISTS (SELECT 1 FROM channel_listings l WHERE l.product_id = p.id AND l.status = 'linked'
+                 AND (lower(l.external_id) LIKE ? OR lower(l.sku) LIKE ? OR lower(l.asin) LIKE ?)))`);
+    params.push(term, term, term, term, term, term, term);
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const orderSql =
@@ -116,6 +128,69 @@ export function missingForSale(p: { price_pence: number; image_url: string | nul
   return missing;
 }
 
+/**
+ * The product's SKU for the list: its Amazon SKU when it has one (that's the
+ * code the owner works with), then its own SKU, then eBay's. Any other codes
+ * it's known by are listed underneath.
+ */
+function ProductSkus(props: { product: ProductWithCategory; listings: ChannelListing[] }) {
+  const amazon = props.listings.filter((l) => l.channel === 'amazon').map((l) => l.sku ?? l.external_id);
+  const codes = [...new Set([...amazon, props.product.sku, props.product.ebay_sku].filter((x): x is string => Boolean(x)))];
+  if (!codes.length) return <span class="faint">—</span>;
+  const [main, ...rest] = codes;
+  return (
+    <>
+      <span class="sku-main">{main}</span>
+      {rest.length ? <span class="sku-more faint small">{rest.join(' · ')}</span> : null}
+    </>
+  );
+}
+
+/** Every place the product is sold, one badge each: channel, shop/SKU, what it shows, and a link. */
+function ListedOn(props: { product: ProductWithCategory; listings: ChannelListing[] }) {
+  const { product, listings } = props;
+  return (
+    <span class="listed-on">
+      <span class={`stock-badge ${product.status === 'active' ? '' : 'stock-badge-warn'}`} title="This website">
+        Website{product.status === 'active' ? '' : ` (${product.status})`}
+      </span>
+      {listings.map((l) => {
+        const fba = l.fulfilment === 'amazon';
+        const label =
+          l.channel === 'ebay' ? `eBay ${l.account} #${l.external_id}` : `Amazon ${fba ? 'FBA' : 'FBM'} ${l.sku ?? l.external_id}`;
+        const href =
+          l.channel === 'ebay'
+            ? `https://www.ebay.co.uk/itm/${encodeURIComponent(l.external_id)}`
+            : l.asin
+              ? `https://www.amazon.co.uk/dp/${encodeURIComponent(l.asin)}`
+              : null;
+        const state = l.last_error ? 'stock-badge-bad' : '';
+        const title = l.last_error
+          ? `Couldn't update: ${l.last_error}`
+          : fba
+            ? 'Amazon ships this from its warehouse (FBA): not part of your count'
+            : `${l.channel === 'ebay' ? 'eBay' : 'Amazon'} shows ${l.channel_qty ?? '?'}`;
+        const body = (
+          <>
+            {label}
+            {fba ? null : <strong> {l.channel_qty ?? '?'}</strong>}
+            {l.last_error ? ' ⚠' : ''}
+          </>
+        );
+        return href ? (
+          <a class={`stock-badge ${state}`} href={href} target="_blank" rel="noreferrer" title={title}>
+            {body}
+          </a>
+        ) : (
+          <span class={`stock-badge ${state}`} title={title}>
+            {body}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 function statusPill(status: ProductStatus) {
   const cls = status === 'active' ? 'pill-ok' : status === 'draft' ? 'pill-warn' : 'pill-bad';
   return <span class={`pill ${cls}`}>{status}</span>;
@@ -130,6 +205,7 @@ products.get('/', async (c) => {
     categoryId: query.category ? Number(query.category) : undefined,
     status: query.status,
     source: query.source,
+    listed: query.listed,
     lowStock: query.lowStock === '1',
     sort: query.sort,
     page,
@@ -139,6 +215,7 @@ products.get('/', async (c) => {
     listCategories(c.env),
     countDraftProducts(c.env),
   ]);
+  const listings = await listingsForProducts(c.env, items.map((p) => p.id));
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
   const flash = flashOf(c);
   const backUrl = c.req.path + (new URL(c.req.url).search || '');
@@ -194,7 +271,7 @@ products.get('/', async (c) => {
       {/* Collapsed by default: the stock table is what the owner opens this
           page for, and an expanded filter form pushed it off a phone screen.
           Opens automatically when a filter is actually in use. */}
-      <details class="filter-details" open={Boolean(query.q || query.category || query.status || query.source || query.lowStock)}>
+      <details class="filter-details" open={Boolean(query.q || query.category || query.status || query.source || query.listed || query.lowStock)}>
         <summary>Search &amp; filter</summary>
       <form method="get" action="/admin/products" class="filter-bar">
         <div class="field field-wide">
@@ -230,6 +307,21 @@ products.get('/', async (c) => {
             {(['manual', 'ebay', 'csv'] as const).map((s) => (
               <option value={s} selected={query.source === s}>
                 {s}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div class="field">
+          <label for="listed">Listed on</label>
+          <select id="listed" name="listed">
+            {[
+              ['', 'Anywhere'],
+              ['ebay', 'eBay'],
+              ['amazon', 'Amazon'],
+              ['website', 'Website only'],
+            ].map(([val, label]) => (
+              <option value={val} selected={(query.listed ?? '') === val}>
+                {label}
               </option>
             ))}
           </select>
@@ -272,12 +364,11 @@ products.get('/', async (c) => {
             <tr>
               <th></th>
               <th>Title</th>
-              <th class="col-optional">SKU</th>
+              <th>SKU</th>
               <th class="col-optional">Category</th>
               <th class="num">Price</th>
               <th class="num">Stock</th>
               <th>Status</th>
-              <th class="col-optional">Source</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -287,13 +378,16 @@ products.get('/', async (c) => {
                 <td>
                   {p.image_url ? <img class="thumb" src={p.image_url} alt="" /> : <span class="faint">—</span>}
                 </td>
-                <td>
+                <td class="product-cell">
                   <a href={`/admin/products/${p.id}`}>{p.title}</a>
                   {p.status === 'draft' && missingForSale(p).length ? (
                     <span class="needs">Needs {andList(missingForSale(p))} before it can go on sale</span>
                   ) : null}
+                  <ListedOn product={p} listings={listings.get(p.id) ?? []} />
                 </td>
-                <td class="faint col-optional">{p.sku ?? '—'}</td>
+                <td class="nowrap">
+                  <ProductSkus product={p} listings={listings.get(p.id) ?? []} />
+                </td>
                 <td class="faint col-optional">{p.category_name ?? '—'}</td>
                 <td class="num">{formatPence(p.price_pence)}</td>
                 <td class="num">
@@ -314,9 +408,6 @@ products.get('/', async (c) => {
                   />
                 </td>
                 <td>{statusPill(p.status)}</td>
-                <td class="col-optional">
-                  <span class={`badge-source ${p.source}`}>{p.source}</span>
-                </td>
                 <td class="row-actions">
                   <a class="btn btn-sm btn-secondary" href={`/admin/products/${p.id}`}>
                     Edit
@@ -344,7 +435,7 @@ products.get('/', async (c) => {
             ))}
             {!items.length ? (
               <tr>
-                <td colSpan={9} class="center muted" style="padding:32px;">
+                <td colSpan={8} class="center muted" style="padding:32px;">
                   No products match these filters.
                 </td>
               </tr>

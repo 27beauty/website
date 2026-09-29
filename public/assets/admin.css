@@ -683,3 +683,11 @@ input[inputmode="decimal"], input[type="number"] { font-variant-numeric: tabular
 .attention-list .why { color: var(--ink-soft); font-size: .88rem; flex: 1 1 18em; }
 /* The type-to-search box sits inside a radio option; don't size it like the radio. */
 .quote-option input.ch-other { width: 100%; height: auto; min-height: 40px; margin-top: 4px; padding: 8px 10px; flex: 1 1 auto; }
+
+/* Products list: every platform a product is on, in its one row. */
+.product-cell { min-width: 12em; }
+.listed-on { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.listed-on a.stock-badge { text-decoration: none; }
+.listed-on a.stock-badge:hover { border-color: var(--brand); }
+.sku-main { display: block; font-variant-numeric: tabular-nums; }
+.sku-more { display: block; }
