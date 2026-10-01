@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildReviseInventoryStatus, parseActiveList, parseItemDetails, parseItemStatus, parseReviseResponse, tagText } from '../src/lib/ebay/trading';
 import { saleLines } from '../src/lib/ebay/orders';
-import { classifyOrders, mapListing, mapListingDetails } from '../src/lib/amazon/spapi';
+import { classifyOrders, mapCatalogDescription, mapListing, mapListingDetails } from '../src/lib/amazon/spapi';
 import { planEbayBatches } from '../src/lib/channels';
 import { decryptSecret, encryptSecret } from '../src/lib/crypto';
 
@@ -215,5 +215,19 @@ describe('eBay listing details (GetItem)', () => {
 
   it('ignores a price in another currency', () => {
     expect(parseItemDetails('<Item><SellingStatus><CurrentPrice currencyID="EUR">9.00</CurrentPrice></SellingStatus></Item>').pricePence).toBeNull();
+  });
+});
+
+describe('Amazon catalogue description', () => {
+  it('builds the description from the catalogue page bullets and text', () => {
+    expect(
+      mapCatalogDescription({
+        attributes: {
+          product_description: [{ value: 'Sugar-free lozenges.', marketplace_id: 'A1F83G8C2ARO7P' }],
+          bullet_point: [{ value: 'Triple action', marketplace_id: 'A1F83G8C2ARO7P' }],
+        },
+      }),
+    ).toBe('Sugar-free lozenges.\n\n• Triple action');
+    expect(mapCatalogDescription({})).toBeNull();
   });
 });

@@ -238,6 +238,7 @@ export interface ChannelListing {
   image_url: string | null;
   description: string | null;
   details_checked_at: string | null;
+  catalog_checked_at: string | null;
   created_at: string;
   updated_at: string;
 }

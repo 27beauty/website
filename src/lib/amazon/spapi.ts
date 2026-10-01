@@ -184,6 +184,28 @@ export async function getListingDetails(env: Env, counter: CallCounter, sku: str
   return mapListingDetails(raw);
 }
 
+interface RawCatalogItem {
+  attributes?: {
+    product_description?: { value?: string; marketplace_id?: string }[];
+    bullet_point?: { value?: string; marketplace_id?: string }[];
+  };
+}
+
+/**
+ * The description and bullet points from Amazon's catalogue page for an ASIN.
+ * A seller's own listing only carries what that seller submitted, so for a
+ * product they resell this is where the words are.
+ */
+export function mapCatalogDescription(raw: RawCatalogItem): string | null {
+  return mapListingDetails({ attributes: raw.attributes }).description;
+}
+
+export async function getCatalogDescription(env: Env, counter: CallCounter, asin: string): Promise<string | null> {
+  const params = new URLSearchParams({ marketplaceIds: UK_MARKETPLACE, includedData: 'attributes' });
+  const raw = await sp<RawCatalogItem>(env, counter, `/catalog/2022-04-01/items/${encodeURIComponent(asin)}?${params.toString()}`);
+  return mapCatalogDescription(raw);
+}
+
 export async function setMerchantQuantity(env: Env, counter: CallCounter, sku: string, quantity: number): Promise<void> {
   const json = await sp<{ status?: string; issues?: { message?: string; severity?: string }[] }>(
     env,

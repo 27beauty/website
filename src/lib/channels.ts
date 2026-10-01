@@ -29,6 +29,7 @@ import {
   fetchUpdatedOrders,
   newestUpdate,
   AmazonThrottledError,
+  getCatalogDescription,
   getListingDetails,
   searchListingsPage,
   setMerchantQuantity,
@@ -1068,6 +1069,56 @@ export async function fillEbayDrafts(env: Env, budget: Budget, max = 10): Promis
   return { filled, errors };
 }
 
+/**
+ * Descriptions for Amazon listings that came back without one: read from the
+ * catalogue page by ASIN, once per listing, and given to the draft product
+ * behind it if that has no description yet.
+ */
+export async function fillAmazonDescriptions(env: Env, budget: Budget, max = 15): Promise<{ filled: number; errors: string[] }> {
+  const { results } = await env.DB.prepare(
+    `SELECT l.id, l.asin, l.product_id, p.status AS product_status
+       FROM channel_listings l LEFT JOIN products p ON p.id = l.product_id
+      WHERE l.channel = 'amazon' AND l.asin IS NOT NULL AND l.details_checked_at IS NOT NULL
+        AND l.catalog_checked_at IS NULL AND (l.description IS NULL OR trim(l.description) = '')
+        AND (l.status = 'review' OR (l.status = 'linked' AND p.status = 'draft' AND p.merged_into IS NULL))
+      ORDER BY (l.status = 'linked') DESC, l.id
+      LIMIT ?`,
+  )
+    .bind(max)
+    .all<{ id: number; asin: string; product_id: number | null; product_status: string | null }>();
+  const rows = results ?? [];
+  const counter: CallCounter = { calls: 0 };
+  const statements: D1PreparedStatement[] = [];
+  const errors: string[] = [];
+  let filled = 0;
+  for (const r of rows) {
+    if (!budget.take()) break;
+    let description: string | null = null;
+    try {
+      description = await getCatalogDescription(env, counter, r.asin);
+    } catch (err) {
+      if (err instanceof AmazonThrottledError) break;
+      errors.push(`Amazon catalogue ${r.asin}: ${errorText(err)}`);
+    }
+    statements.push(
+      env.DB.prepare(`UPDATE channel_listings SET description = COALESCE(?, description), catalog_checked_at = datetime('now') WHERE id = ?`).bind(
+        description,
+        r.id,
+      ),
+    );
+    if (description && r.product_id && r.product_status === 'draft') {
+      filled++;
+      statements.push(
+        env.DB.prepare(
+          `UPDATE products SET description = COALESCE(NULLIF(trim(description), ''), ?), updated_at = datetime('now') WHERE id = ?`,
+        ).bind(description, r.product_id),
+      );
+    }
+  }
+  for (let i = 0; i < statements.length; i += 50) await env.DB.batch(statements.slice(i, i + 50));
+  return { filled, errors };
+}
+
 /** Marks a set-aside listing that eBay confirmed has ended, so it's never re-checked. */
 const ENDED_ON_EBAY = 'Ended on eBay';
 
@@ -1169,6 +1220,15 @@ export async function runStockJob(env: Env, now = new Date()): Promise<StockJobS
       summary.errors.push(...r.errors.slice(0, 3));
     } catch (err) {
       summary.errors.push(`Amazon details: ${errorText(err)}`);
+    }
+    if (budget.remaining >= 3) {
+      try {
+        const r = await fillAmazonDescriptions(env, budget, Math.min(15, budget.remaining - 1));
+        if (r.filled) summary.filled = (summary.filled ?? 0) + r.filled;
+        summary.errors.push(...r.errors.slice(0, 3));
+      } catch (err) {
+        summary.errors.push(`Amazon descriptions: ${errorText(err)}`);
+      }
     }
   }
 
