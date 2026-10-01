@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildReviseInventoryStatus, parseActiveList, parseItemStatus, parseReviseResponse, tagText } from '../src/lib/ebay/trading';
+import { buildReviseInventoryStatus, parseActiveList, parseItemDetails, parseItemStatus, parseReviseResponse, tagText } from '../src/lib/ebay/trading';
 import { saleLines } from '../src/lib/ebay/orders';
 import { classifyOrders, mapListing, mapListingDetails } from '../src/lib/amazon/spapi';
 import { planEbayBatches } from '../src/lib/channels';
@@ -196,5 +196,24 @@ describe('Amazon listing details', () => {
 
   it('copes with a listing that has none of them', () => {
     expect(mapListingDetails({})).toEqual({ pricePence: null, imageUrl: null, description: null });
+  });
+});
+
+describe('eBay listing details (GetItem)', () => {
+  it('reads the price, photos and description', () => {
+    const xml = `<GetItemResponse><Ack>Success</Ack><Item>
+      <SellingStatus><CurrentPrice currencyID="GBP">12.49</CurrentPrice><ListingStatus>Active</ListingStatus></SellingStatus>
+      <PictureDetails><PictureURL>https://i.ebayimg.com/a.jpg</PictureURL><PictureURL>https://i.ebayimg.com/b.jpg</PictureURL></PictureDetails>
+      <Description>&lt;p&gt;Daily vitamins&lt;/p&gt;</Description>
+    </Item></GetItemResponse>`;
+    expect(parseItemDetails(xml)).toEqual({
+      pricePence: 1249,
+      images: ['https://i.ebayimg.com/a.jpg', 'https://i.ebayimg.com/b.jpg'],
+      description: 'Daily vitamins',
+    });
+  });
+
+  it('ignores a price in another currency', () => {
+    expect(parseItemDetails('<Item><SellingStatus><CurrentPrice currencyID="EUR">9.00</CurrentPrice></SellingStatus></Item>').pricePence).toBeNull();
   });
 });

@@ -20,7 +20,7 @@ import { D1_IN_CHUNK, uniqueSlug } from './util';
 import { adjustStock, centralStockEnabled, setStock, type StockChange } from './stock';
 import { MatchIndex, exactDuplicateGroups, matchListing, type MatchCandidate } from './matching';
 import { getUserAccessToken, sellerConnected } from './ebay/oauth';
-import { getActiveListingsPage, getItemStatus, reviseQuantities, REVISE_BATCH, type QuantityUpdate } from './ebay/trading';
+import { getActiveListingsPage, getItemDetails, getItemStatus, reviseQuantities, REVISE_BATCH, type QuantityUpdate } from './ebay/trading';
 import { fetchModifiedOrders, newestModified, saleLines } from './ebay/orders';
 import {
   amazonConfigured,
@@ -999,6 +999,75 @@ export async function fillAmazonDetails(env: Env, budget: Budget, max = 20): Pro
   return { read, filled, errors };
 }
 
+/**
+ * The same for products added from an eBay listing on the review screen: the
+ * eBay sync only fills in products it imported itself, so these started as
+ * £0 drafts. Reads each listing as the seller (price, photos, description)
+ * and fills the draft — price less the owner's bands — keeping anything set.
+ */
+export async function fillEbayDrafts(env: Env, budget: Budget, max = 10): Promise<{ filled: number; errors: string[] }> {
+  const { results } = await env.DB.prepare(
+    `SELECT l.id, l.account, l.external_id, l.title, l.product_id
+       FROM channel_listings l JOIN products p ON p.id = l.product_id
+      WHERE l.channel = 'ebay' AND l.status = 'linked' AND l.details_checked_at IS NULL
+        AND p.status = 'draft' AND p.merged_into IS NULL AND (p.price_pence <= 0 OR p.image_url IS NULL)
+      ORDER BY l.id LIMIT ?`,
+  )
+    .bind(max)
+    .all<{ id: number; account: string; external_id: string; title: string; product_id: number }>();
+  const rows = results ?? [];
+  if (!rows.length) return { filled: 0, errors: [] };
+  const accounts = new Map((await connectedEbayAccounts(env)).map((a) => [accountKey(a), a]));
+  const [tiers, rules] = await Promise.all([
+    getSetting<unknown>(env, 'ebay.price_tiers', []).then(normalisePriceTiers),
+    loadCategoryRules(env),
+  ]);
+  const tokens = new Map<string, string | null>();
+  const statements: D1PreparedStatement[] = [];
+  const errors: string[] = [];
+  let filled = 0;
+  for (const r of rows) {
+    const account = accounts.get(r.account);
+    if (!account) continue;
+    if (!tokens.has(r.account)) tokens.set(r.account, await getUserAccessToken(env, account));
+    const token = tokens.get(r.account);
+    if (!token || !budget.take()) break;
+    try {
+      const d = await getItemDetails(token, r.external_id);
+      const price = d.pricePence ? websitePriceFromEbay(d.pricePence, account.markup_percent, tiers) : null;
+      filled++;
+      statements.push(
+        env.DB.prepare(
+          `UPDATE channel_listings SET price_pence = ?, image_url = ?, description = ?, details_checked_at = datetime('now') WHERE id = ?`,
+        ).bind(d.pricePence, d.images[0] ?? null, d.description, r.id),
+        env.DB.prepare(
+          `UPDATE products SET
+             price_pence = CASE WHEN price_pence <= 0 AND ? IS NOT NULL THEN ? ELSE price_pence END,
+             image_url = COALESCE(image_url, ?),
+             images_json = CASE WHEN (images_json IS NULL OR images_json IN ('', '[]')) AND ? IS NOT NULL THEN ? ELSE images_json END,
+             description = COALESCE(NULLIF(trim(description), ''), ?),
+             category_id = COALESCE(category_id, ?),
+             updated_at = datetime('now')
+           WHERE id = ?`,
+        ).bind(
+          price,
+          price,
+          d.images[0] ?? null,
+          d.images[0] ?? null,
+          d.images.length ? JSON.stringify(d.images) : null,
+          d.description,
+          mapCategory({ title: r.title }, rules, null),
+          r.product_id,
+        ),
+      );
+    } catch (err) {
+      errors.push(`eBay item ${r.external_id}: ${errorText(err)}`);
+    }
+  }
+  if (statements.length) await env.DB.batch(statements);
+  return { filled, errors };
+}
+
 /** Marks a set-aside listing that eBay confirmed has ended, so it's never re-checked. */
 const ENDED_ON_EBAY = 'Ended on eBay';
 
@@ -1084,10 +1153,19 @@ export async function runStockJob(env: Env, now = new Date()): Promise<StockJobS
     }
   }
 
+  if (connected.length && budget.remaining >= 3) {
+    try {
+      const r = await fillEbayDrafts(env, budget, Math.min(10, budget.remaining - 1));
+      if (r.filled) summary.filled = (summary.filled ?? 0) + r.filled;
+      summary.errors.push(...r.errors.slice(0, 3));
+    } catch (err) {
+      summary.errors.push(`eBay draft details: ${errorText(err)}`);
+    }
+  }
   if (amazonConfigured(env) && budget.remaining >= 3) {
     try {
       const r = await fillAmazonDetails(env, budget, Math.min(20, budget.remaining - 1));
-      if (r.filled) summary.filled = r.filled;
+      if (r.filled) summary.filled = (summary.filled ?? 0) + r.filled;
       summary.errors.push(...r.errors.slice(0, 3));
     } catch (err) {
       summary.errors.push(`Amazon details: ${errorText(err)}`);

@@ -12,6 +12,7 @@
  */
 
 import { fetchWithRetry } from './http';
+import { htmlToText } from '../util';
 
 const TRADING_URL = 'https://api.ebay.com/ws/api.dll';
 const SITE_ID_UK = '3';
@@ -228,4 +229,35 @@ export async function getItemStatus(token: string, itemId: string) {
     `<ItemID>${escapeXml(itemId)}</ItemID><OutputSelector>Item.ItemID</OutputSelector><OutputSelector>Item.Quantity</OutputSelector><OutputSelector>Item.SellingStatus</OutputSelector>`,
   );
   return parseItemStatus(xml);
+}
+
+/** A listing's price, photos and description, for filling in a product added from it. */
+export interface EbayItemDetails {
+  pricePence: number | null;
+  images: string[];
+  description: string | null;
+}
+
+export function parseItemDetails(xml: string): EbayItemDetails {
+  const item = tagText(xml, 'Item') ?? '';
+  const price = Number(tagText(tagText(item, 'SellingStatus') ?? '', 'CurrentPrice') ?? tagText(item, 'StartPrice') ?? NaN);
+  const currency = /<CurrentPrice[^>]*currencyID="([A-Z]{3})"/.exec(item)?.[1] ?? 'GBP';
+  const images = tagBlocks(tagText(item, 'PictureDetails') ?? '', 'PictureURL')
+    .map((u) => unescapeXml(u.trim()))
+    .filter((u) => /^https:\/\//.test(u));
+  const description = htmlToText(tagText(item, 'Description')) || null;
+  return {
+    pricePence: currency === 'GBP' && Number.isFinite(price) && price > 0 ? Math.round(price * 100) : null,
+    images,
+    description,
+  };
+}
+
+export async function getItemDetails(token: string, itemId: string): Promise<EbayItemDetails> {
+  const xml = await tradingCall(
+    token,
+    'GetItem',
+    `<ItemID>${escapeXml(itemId)}</ItemID><DetailLevel>ReturnAll</DetailLevel><OutputSelector>Item.SellingStatus</OutputSelector><OutputSelector>Item.StartPrice</OutputSelector><OutputSelector>Item.PictureDetails</OutputSelector><OutputSelector>Item.Description</OutputSelector>`,
+  );
+  return parseItemDetails(xml);
 }
