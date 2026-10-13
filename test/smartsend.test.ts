@@ -2,7 +2,19 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../src/types';
-import { SMART_SEND_COLUMNS, countNewForSmartSend, markSentToSmartSend, ordersForSmartSend, smartSendCsv, toCsv, toIso2Country } from '../src/lib/smartsend';
+import {
+  ITEM_NAME_MAX,
+  SMART_SEND_COLUMNS,
+  confirmSentToSmartSend,
+  countNewForSmartSend,
+  itemSummary,
+  listUnconfirmedForSmartSend,
+  markDownloadedForSmartSend,
+  ordersForSmartSend,
+  smartSendCsv,
+  toCsv,
+  toIso2Country,
+} from '../src/lib/smartsend';
 import { createTestD1 } from './helpers/d1';
 
 let env: Env;
@@ -26,7 +38,7 @@ beforeEach(() => {
 
 describe('Smart Send CSV', () => {
   it('has one row per paid order, in the columns Smart Send expects', async () => {
-    const orders = await ordersForSmartSend(env, true);
+    const orders = await ordersForSmartSend(env, 'new');
     expect(orders.map((o) => o.order_number)).toEqual(['27B-1001']);
     const lines = (await smartSendCsv(env, orders)).trim().split('\r\n');
     expect(lines[0]).toBe(SMART_SEND_COLUMNS.map((c) => `"${c}"`).join(','));
@@ -44,12 +56,35 @@ describe('Smart Send CSV', () => {
     expect(cell('Name')).toBe('Ann Smith');
   });
 
-  it('only includes orders not downloaded before when asked for new ones', async () => {
+  it("keeps a downloaded order waiting until the upload is confirmed", async () => {
     expect(await countNewForSmartSend(env)).toBe(1);
-    await markSentToSmartSend(env, [1]);
+    await markDownloadedForSmartSend(env, [1]);
+    // Downloaded: not offered as new again, but not lost either.
     expect(await countNewForSmartSend(env)).toBe(0);
-    expect(await ordersForSmartSend(env, true)).toEqual([]);
-    expect((await ordersForSmartSend(env, false)).map((o) => o.id)).toEqual([1]);
+    expect(await ordersForSmartSend(env, 'new')).toEqual([]);
+    expect((await ordersForSmartSend(env, 'unconfirmed')).map((o) => o.id)).toEqual([1]);
+    expect((await listUnconfirmedForSmartSend(env)).map((o) => o.order_number)).toEqual(['27B-1001']);
+
+    expect(await confirmSentToSmartSend(env, [1])).toBe(1);
+    expect(await listUnconfirmedForSmartSend(env)).toEqual([]);
+    expect(await ordersForSmartSend(env, 'unconfirmed')).toEqual([]);
+    expect((await ordersForSmartSend(env, 'all')).map((o) => o.id)).toEqual([1]);
+  });
+
+  it("can't confirm an order that was never downloaded", async () => {
+    expect(await confirmSentToSmartSend(env, [1])).toBe(0);
+    expect(await countNewForSmartSend(env)).toBe(1);
+  });
+
+  it('only confirms the orders the owner saw, not one downloaded since', async () => {
+    sql.exec(`
+      INSERT INTO orders (id, order_number, status, subtotal_pence, discount_pence, shipping_pence, total_pence)
+      VALUES (3, '27B-1003', 'paid', 500, 0, 0, 500);
+    `);
+    await markDownloadedForSmartSend(env, [1]);
+    await markDownloadedForSmartSend(env, [3]); // a second download in another tab
+    expect(await confirmSentToSmartSend(env, [1])).toBe(1);
+    expect((await listUnconfirmedForSmartSend(env)).map((o) => o.id)).toEqual([3]);
   });
 
   it('quotes commas and quotes safely, and writes UK as GB', () => {
@@ -57,5 +92,35 @@ describe('Smart Send CSV', () => {
     expect(toIso2Country('United Kingdom'.slice(0, 0))).toBe('GB');
     expect(toIso2Country('GBR')).toBe('GB');
     expect(toIso2Country('ie')).toBe('IE');
+  });
+});
+
+describe('itemSummary', () => {
+  const line = (quantity: number, title: string) => ({ quantity, title });
+
+  it('lists every line in full when it fits', () => {
+    expect(itemSummary([line(3, 'Hand Cream 50ml'), line(1, 'Lip Oil')], '27B-1')).toBe('3 x Hand Cream 50ml; 1 x Lip Oil');
+  });
+
+  it('shortens long titles, never drops a line, and keeps short titles whole', () => {
+    const long = 'NYX Professional Makeup Lip Lingerie XXL Matte Liquid Lipstick - Warm Up, long lasting, vegan formula';
+    const items = [line(1, long), line(2, long.replace('Warm Up', 'Sizzlin')), line(1, 'Lip Oil'), line(4, long.replace('Warm Up', 'Bust Ed'))];
+    const out = itemSummary(items, '27B-1');
+    expect(out.length).toBeLessThanOrEqual(ITEM_NAME_MAX);
+    const parts = out.split('; ');
+    expect(parts).toHaveLength(4);
+    expect(parts.map((p) => p.split(' x ')[0])).toEqual(['1', '2', '1', '4']);
+    expect(parts[2]).toBe('1 x Lip Oil');
+    expect(out).not.toContain('more');
+  });
+
+  it('says how many lines are left out, and where to find them, when even short titles cannot fit', () => {
+    const items = Array.from({ length: 30 }, (_, i) => line(1, `Product number ${i + 1} with a long name`));
+    const out = itemSummary(items, '27B-1042');
+    expect(out.length).toBeLessThanOrEqual(ITEM_NAME_MAX);
+    const m = /; \+(\d+) more, see 27B-1042$/.exec(out);
+    expect(m).not.toBeNull();
+    const shown = out.slice(0, m!.index).split('; ').length;
+    expect(shown + Number(m![1])).toBe(30);
   });
 });

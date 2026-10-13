@@ -2,7 +2,15 @@ import { Hono } from 'hono';
 import type { AppBindings, Order, OrderStatus, ShippingAddress } from '../../types';
 import { getAdmin, verifyCsrf } from '../../lib/admin-auth';
 import { AdminLayout, AdminPrintPage, CsrfField, Guide } from '../../ui/admin-layout';
-import { countNewForSmartSend, markSentToSmartSend, ordersForSmartSend, smartSendCsv } from '../../lib/smartsend';
+import {
+  confirmSentToSmartSend,
+  countNewForSmartSend,
+  listUnconfirmedForSmartSend,
+  markDownloadedForSmartSend,
+  ordersForSmartSend,
+  smartSendCsv,
+  type SmartSendScope,
+} from '../../lib/smartsend';
 import { formatPence } from '../../lib/money';
 import { clampInt, inChunks } from '../../lib/util';
 import { getOrderWithItems, restockCancelledOrder, type OrderWithItems } from '../../lib/orders';
@@ -255,6 +263,7 @@ orders.get('/', async (c) => {
   const page = clampInt(query.page, 1, 100000, 1);
   const view = query.view === 'baskets' ? 'baskets' : query.view === 'shipping' ? 'shipping' : 'orders';
   const smartSendNew = view === 'shipping' ? await countNewForSmartSend(c.env) : null;
+  const unconfirmed = view === 'shipping' ? await listUnconfirmedForSmartSend(c.env) : [];
   const allowedStatuses: readonly string[] =
     view === 'baskets' ? BASKET_STATUSES : view === 'shipping' ? SHIPPING_STATUSES : PAID_STATUSES;
   const status = query.status && allowedStatuses.includes(query.status) ? query.status : undefined;
@@ -323,11 +332,12 @@ orders.get('/', async (c) => {
       {view === 'shipping' ? (
         <>
           <Guide
-            what={`${total} paid order${total === 1 ? '' : 's'} waiting to be sent${smartSendNew !== null ? `, ${smartSendNew} not yet sent to Smart Send` : ''}.`}
-            why="Parcel2Go Smart Send books them in bulk from a spreadsheet: download it here, then upload it in Smart Send (Upload → Choose → Upload Spreadsheet)."
+            what={`${total} paid order${total === 1 ? '' : 's'} waiting to be sent: ${smartSendNew ?? 0} not downloaded for Smart Send yet${unconfirmed.length ? `, ${unconfirmed.length} downloaded but not confirmed as uploaded` : ''}.`}
+            why="Parcel2Go Smart Send books them in bulk from a spreadsheet: download it here, upload it in Smart Send (Upload → Choose → Upload Spreadsheet), then come back and confirm. Until you confirm, those orders stay on this page so none can be missed."
             choices={[
-              { label: 'Download new orders', effect: "only orders you haven't downloaded before, so nothing is booked twice." },
-              { label: 'Download all again', effect: 'every paid order still waiting, e.g. if an upload failed.' },
+              { label: 'Download new orders', effect: "orders you haven't downloaded before, so nothing is booked twice." },
+              { label: "I've uploaded them", effect: 'marks the downloaded orders as sent to Smart Send.' },
+              { label: 'Download these again', effect: "the downloaded orders you haven't confirmed, e.g. if the file went missing or the upload failed." },
               { label: 'Book →', effect: 'one order at a time here, paid from your PrePay balance.' },
             ]}
           />
@@ -337,12 +347,38 @@ orders.get('/', async (c) => {
               Download new orders for Smart Send{smartSendNew ? ` (${smartSendNew})` : ''}
             </button>
             <button class="btn btn-secondary" type="submit" name="scope" value="all" disabled={total === 0}>
-              Download all again
+              Download all waiting orders
             </button>
           </form>
+          {unconfirmed.length ? (
+            <div class="smartsend-pending">
+              <p>
+                <strong>
+                  {unconfirmed.length} order{unconfirmed.length === 1 ? '' : 's'} downloaded but not confirmed as uploaded:
+                </strong>{' '}
+                {unconfirmed.map((o) => o.order_number).join(', ')}
+              </p>
+              <div class="row smartsend-form">
+                <form method="post" action="/admin/orders/smartsend/confirm">
+                  <CsrfField token={admin.csrf} />
+                  <input type="hidden" name="ids" value={unconfirmed.map((o) => o.id).join(',')} />
+                  <button class="btn" type="submit">
+                    I've uploaded {unconfirmed.length === 1 ? 'it' : 'them'} to Smart Send
+                  </button>
+                </form>
+                <form method="post" action="/admin/orders/smartsend.csv">
+                  <CsrfField token={admin.csrf} />
+                  <button class="btn btn-secondary" type="submit" name="scope" value="unconfirmed">
+                    Download {unconfirmed.length === 1 ? 'it' : 'these'} again
+                  </button>
+                </form>
+              </div>
+            </div>
+          ) : null}
           <p class="muted small">
             Each row is one order as one parcel: items, value, weight and size (from each product's parcel size, or the
-            default in Settings) and the delivery address. Marked fulfilled orders drop off this list.
+            default in Settings) and the delivery address. Every item is named with its quantity; long names are
+            shortened to fit. Marked fulfilled orders drop off this list.
           </p>
         </>
       ) : null}
@@ -616,24 +652,28 @@ async function loadOrder(
 
 /**
  * The Parcel2Go Smart Send spreadsheet: paid orders waiting to be sent, as a
- * CSV download. "new" is only orders not downloaded before (they're marked,
- * so the next download doesn't repeat them); "all" is every one still waiting.
+ * CSV download. "new" is only orders never downloaded, "unconfirmed" the
+ * downloaded ones not yet confirmed as uploaded, "all" every one still
+ * waiting. Downloading marks orders downloaded, never sent: that takes the
+ * owner's confirmation (POST /smartsend/confirm).
  */
 orders.post('/smartsend.csv', async (c) => {
   const body = await c.req.parseBody();
   if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
     return c.redirect('/admin/orders?view=shipping&err=' + encodeURIComponent('Your session expired — please try again.'), 303);
   }
-  const onlyNew = body.scope !== 'all';
-  const list = await ordersForSmartSend(c.env, onlyNew);
+  const scope: SmartSendScope = body.scope === 'all' ? 'all' : body.scope === 'unconfirmed' ? 'unconfirmed' : 'new';
+  const list = await ordersForSmartSend(c.env, scope);
   if (!list.length) {
-    return c.redirect(
-      '/admin/orders?view=shipping&msg=' + encodeURIComponent(onlyNew ? 'No new orders to send to Smart Send.' : 'No paid orders are waiting to be sent.'),
-      303,
-    );
+    const none: Record<SmartSendScope, string> = {
+      new: 'No new orders to send to Smart Send.',
+      unconfirmed: 'Nothing is waiting for confirmation.',
+      all: 'No paid orders are waiting to be sent.',
+    };
+    return c.redirect('/admin/orders?view=shipping&msg=' + encodeURIComponent(none[scope]), 303);
   }
   const csv = await smartSendCsv(c.env, list);
-  await markSentToSmartSend(
+  await markDownloadedForSmartSend(
     c.env,
     list.map((o) => o.id),
   );
@@ -643,6 +683,24 @@ orders.post('/smartsend.csv', async (c) => {
     'Content-Disposition': `attachment; filename="27beauty-smartsend-${stamp}.csv"`,
     'Cache-Control': 'no-store',
   });
+});
+
+/** The owner has uploaded the downloaded spreadsheet: those orders now count as sent to Smart Send. */
+orders.post('/smartsend/confirm', async (c) => {
+  const body = await c.req.parseBody();
+  if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
+    return c.redirect('/admin/orders?view=shipping&err=' + encodeURIComponent('Your session expired — please try again.'), 303);
+  }
+  // Only the orders that were on the page: one downloaded since isn't confirmed by accident.
+  const ids = String(body.ids ?? '')
+    .split(',')
+    .map(Number)
+    .filter((n) => Number.isInteger(n) && n > 0);
+  const n = await confirmSentToSmartSend(c.env, ids);
+  return c.redirect(
+    '/admin/orders?view=shipping&msg=' + encodeURIComponent(`${n} order${n === 1 ? '' : 's'} marked as sent to Smart Send.`),
+    303,
+  );
 });
 
 orders.get('/:id', async (c) => {

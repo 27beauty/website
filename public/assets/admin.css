@@ -693,7 +693,10 @@ input[inputmode="decimal"], input[type="number"] { font-variant-numeric: tabular
 .sku-more { display: block; }
 
 /* Orders → Shipping: the Smart Send download buttons. */
-.smartsend-form { margin: 0 0 6px; gap: 8px; }
+.smartsend-form { margin: 0 0 6px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
 /* Product page: merge a duplicate into another product. */
 .merge-into { flex: 1 1 18em; min-height: 40px; }
+.smartsend-pending { border-left: 3px solid var(--warn); background: var(--warn-soft); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+.smartsend-pending p { margin: 0 0 8px; overflow-wrap: anywhere; }
+.smartsend-pending form { margin: 0; }
