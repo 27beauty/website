@@ -6,7 +6,10 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../src/types';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { BEAUTY_CATEGORY_SLUGS, deleteCategory, queryProducts } from '../src/lib/db';
+import { loadCategoryRules, mapCategory } from '../src/lib/ebay/mapping';
 import { createTestD1 } from './helpers/d1';
 
 let env: Env;
@@ -77,5 +80,20 @@ describe('beauty across several categories', () => {
     `);
     const { items } = await queryProducts(env, { categorySlugs: BEAUTY_CATEGORY_SLUGS, sort: 'title' });
     expect(items.map((p) => p.title)).toEqual(['Lotion', 'Mascara', 'Shampoo']);
+  });
+});
+
+describe('beauty keyword rules', () => {
+  it("files a lip stain called \"Espresso\" under makeup, not coffee", async () => {
+    sql.exec(`
+      INSERT INTO categories (id, slug, name, sort_order) VALUES (5, 'skin-and-body-care', 'Skin & Body Care', 50), (6, 'makeup-and-fragrance', 'Makeup & Fragrance', 60);
+      INSERT INTO ebay_category_map (match_type, match_value, category_id, priority) VALUES ('keyword', 'espresso', 2, 100);
+    `);
+    sql.exec(readFileSync(join(__dirname, '..', 'migrations', '0015_more_beauty_rules.sql'), 'utf8'));
+    const rules = await loadCategoryRules(env);
+    expect(mapCategory({ title: "L'Oreal Hyaluron Tint Lip Stain Serum 485 Nude Espresso 5ml" }, rules, null)).toBe(6);
+    expect(mapCategory({ title: 'Philips Lumea 9900 Series, IPL Hair Removal Device' }, rules, null)).toBe(5);
+    expect(mapCategory({ title: 'Lavazza Espresso Beans 1kg' }, rules, null)).toBe(2);
+    expect(mapCategory({ title: 'Triple Pack Multiple Hooks' }, rules, null)).toBeNull(); // "ipl" is a word, not a substring
   });
 });
