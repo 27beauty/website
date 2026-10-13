@@ -89,6 +89,23 @@ export async function ensureEbayListingRows(env: Env): Promise<void> {
        FROM products
       WHERE source = 'ebay' AND ebay_item_id IS NOT NULL AND ebay_account IS NOT NULL`,
   ).run();
+
+  // A listing read from eBay before the sync created its product was parked
+  // in Review matches; once the product exists it's the same listing (same
+  // shop, same item number), so link it instead of leaving it waiting.
+  const sameItem = `SELECT p.id FROM products p
+     WHERE p.source = 'ebay' AND p.merged_into IS NULL AND p.ebay_account = channel_listings.account
+       AND (p.ebay_item_id = channel_listings.external_id OR p.ebay_item_id LIKE 'v1|' || channel_listings.external_id || '|%')
+     ORDER BY p.id LIMIT 1`;
+  const linked = await env.DB.prepare(
+    `UPDATE channel_listings
+        SET product_id = (${sameItem}), status = 'linked', match_score = 1, suggested_product_id = NULL,
+            pushed_qty = COALESCE(pushed_qty, channel_qty), updated_at = datetime('now')
+      WHERE channel = 'ebay' AND status = 'review' AND product_id IS NULL AND EXISTS (${sameItem})`,
+  ).run();
+  // Their products were created from the sync's rough "in stock" figure:
+  // take the listing's real quantity as the first count before anything is pushed.
+  if (linked.meta.changes) await startNewProducts(env, 'ebay');
 }
 
 async function matchCandidates(env: Env): Promise<MatchCandidate[]> {
@@ -236,17 +253,17 @@ export async function importEbayListings(
  * eBay, say, after the switch-over) takes its first count from that
  * listing's real quantity — never from browse mode's estimate.
  */
-async function startNewProducts(env: Env, channel: 'ebay' | 'amazon', account: string): Promise<void> {
+async function startNewProducts(env: Env, channel: 'ebay' | 'amazon', account?: string): Promise<void> {
   if (!(await centralStockEnabled(env))) return; // before go-live takeStartingStock does this for everything
   const { results } = await env.DB.prepare(
     `SELECT l.product_id AS productId, MAX(l.channel_qty) AS quantity
        FROM channel_listings l
-      WHERE l.channel = ? AND l.account = ? AND l.status = 'linked' AND l.fulfilment = 'merchant'
+      WHERE l.channel = ? AND (?2 IS NULL OR l.account = ?2) AND l.status = 'linked' AND l.fulfilment = 'merchant'
         AND l.product_id IS NOT NULL AND l.channel_qty IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.product_id = l.product_id)
       GROUP BY l.product_id`,
   )
-    .bind(channel, account)
+    .bind(channel, account ?? null)
     .all<{ productId: number; quantity: number }>();
   if (results?.length) await setStock(env, results, 'start', `First count from ${channel} listing`);
 }

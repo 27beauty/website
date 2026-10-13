@@ -426,6 +426,19 @@ describe('once switched on', () => {
     expect(sql.all(`SELECT price_pence FROM products WHERE id = 60`)).toEqual([{ price_pence: 750 }]);
   });
 
+  it('links a listing parked in review once the eBay sync creates its product, taking the real quantity', async () => {
+    // Read from eBay first (no product yet) → parked in review.
+    sql.exec(`INSERT INTO channel_listings (channel, account, external_id, title, status, channel_qty, pushed_qty)
+              VALUES ('ebay', 'adinath0', '777', 'SodaStream 7UP Zero 6 x 440ml', 'review', 20, 20)`);
+    // Then the eBay sync creates the product, with its rough "in stock" figure.
+    sql.exec(`INSERT INTO products (id, slug, title, price_pence, stock, source, ebay_item_id, ebay_account, ebay_stock)
+              VALUES (70, '7up', 'SodaStream 7UP Zero 6 x 440ml', 3499, 10, 'ebay', 'v1|777|0', 'adinath0', 10)`);
+    await runStockJob(env, new Date('2099-01-01T00:30:00Z'));
+    expect(sql.all(`SELECT product_id, status FROM channel_listings WHERE external_id = '777'`)).toEqual([{ product_id: 70, status: 'linked' }]);
+    expect(stockOf(70)).toBe(20);
+    expect(world.revised.find((r) => r.itemId === '777')).toBeUndefined(); // nothing wrong pushed out
+  });
+
   it('an Amazon FBM sale comes off and updates eBay; FBA orders are ignored', async () => {
     world.amazonOrders = [
       { AmazonOrderId: '202-1', OrderStatus: 'Unshipped', FulfillmentChannel: 'MFN', LastUpdateDate: '2099-01-01T00:00:00Z' },
