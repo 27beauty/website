@@ -473,7 +473,7 @@ channels.get('/review', async (c) => {
           why="Matching by title alone can't always tell sizes, packs or shades apart. Until you decide, each one is left alone: not counted and not updated."
           choices={[
             { label: 'Same item — link', effect: 'it becomes part of that product.' },
-            { label: 'Add as new product', effect: 'creates a draft product on the website, not on sale yet.' },
+            { label: 'Add as new product', effect: 'creates a draft product on the website, not on sale yet. Not offered for FBA: the website only sells what you ship.' },
             { label: 'Different items', effect: 'eBay only: keeps two similar products apart.' },
             { label: "Don't track", effect: 'ignored for good. Never counted or updated.' },
           ]}
@@ -568,7 +568,7 @@ channels.get('/review', async (c) => {
                       </button>
                       <span>Both stay as separate products, each with its own count.</span>
                     </div>
-                  ) : (
+                  ) : kind === 'fba' ? null : (
                     <div class="ch-action">
                       <button class="btn btn-secondary btn-sm" type="submit" name="action" value="new">
                         Add as new product
@@ -630,6 +630,7 @@ channels.post('/review/:id', async (c) => {
       moved = await resolveListing(c.env, id, { type: 'keep' });
       done = 'Kept as separate products.';
     } else if (action === 'new') {
+      if (kind === 'fba') throw new Error("FBA items aren't sold on the website: Amazon holds that stock. Link it to a product for reference, or choose Don't track.");
       moved = await resolveListing(c.env, id, { type: 'new' });
       done = `Added "${listing.title}" as a draft product. It isn't on sale until you publish it (Products → Drafts).`;
     } else if (action === 'ignore') {
