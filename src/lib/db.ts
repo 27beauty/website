@@ -47,8 +47,14 @@ export async function listProductChoices(env: Env): Promise<Array<{ id: number; 
   return results ?? [];
 }
 
-/** Homepage's beauty showcase pulls straight from this category — see db/seed.sql. It can't be deleted. */
+/** The original beauty category (now Hair Care). Kept: old links and the eBay rules point at it, so it can't be deleted. */
 export const BEAUTY_CATEGORY_SLUG = 'hair-beauty';
+
+/**
+ * Beauty is the shop's focus: the homepage showcase and /category/beauty list
+ * everything in these categories together.
+ */
+export const BEAUTY_CATEGORY_SLUGS = [BEAUTY_CATEGORY_SLUG, 'skin-and-body-care', 'makeup-and-fragrance'];
 
 /** Every category with a count of all its products (any status), for Admin → Categories. */
 export async function listCategoriesForAdmin(env: Env): Promise<Array<Category & { product_count: number }>> {
@@ -112,6 +118,8 @@ export async function getCategoryBySlug(env: Env, slug: string): Promise<Categor
 
 export interface ProductQuery {
   categorySlug?: string;
+  /** Any of these categories (e.g. all the beauty ones). */
+  categorySlugs?: string[];
   categoryId?: number;
   search?: string;
   status?: 'active' | 'draft' | 'archived' | 'any';
@@ -137,6 +145,10 @@ export async function queryProducts(
   if (q.categorySlug) {
     where.push('c.slug = ?');
     params.push(q.categorySlug);
+  }
+  if (q.categorySlugs?.length) {
+    where.push(`c.slug IN (${q.categorySlugs.map(() => '?').join(',')})`);
+    params.push(...q.categorySlugs);
   }
   if (q.categoryId) {
     where.push('p.category_id = ?');

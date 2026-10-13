@@ -10,6 +10,7 @@ import {
   getProductById,
   relatedProducts,
   BEAUTY_CATEGORY_SLUG,
+  BEAUTY_CATEGORY_SLUGS,
 } from '../lib/db';
 import {
   addLine,
@@ -127,10 +128,10 @@ storefront.get('/', async (c) => {
     listCategories(c.env),
     listCategoriesWithCounts(c.env),
     featuredOrNewest(c.env, 8),
-    queryProducts(c.env, { categorySlug: BEAUTY_CATEGORY_SLUG, sort: 'newest', limit: 8 }),
+    queryProducts(c.env, { categorySlugs: BEAUTY_CATEGORY_SLUGS, sort: 'newest', limit: 8 }),
   ]);
   const beautyProducts = beautyRes.items;
-  const otherCategoryTiles = categoryTiles.filter((cat) => cat.slug !== BEAUTY_CATEGORY_SLUG);
+  const otherCategoryTiles = categoryTiles.filter((cat) => !BEAUTY_CATEGORY_SLUGS.includes(cat.slug));
 
   return c.html(
     <Layout
@@ -148,7 +149,7 @@ storefront.get('/', async (c) => {
             Real skincare, haircare and grooming brands, dispatched fast from the UK — the same
             products you'd find on the marketplaces, without the markup.
           </p>
-          <a class="btn btn-accent" href={`/category/${BEAUTY_CATEGORY_SLUG}`}>
+          <a class="btn btn-accent" href="/category/beauty">
             Shop beauty &amp; grooming
           </a>
         </div>
@@ -157,7 +158,7 @@ storefront.get('/', async (c) => {
       <section class="stack home-section">
         <div class="row-between">
           <h2 style="margin-bottom:0">💄 Beauty &amp; grooming favourites</h2>
-          <a href={`/category/${BEAUTY_CATEGORY_SLUG}`}>Shop all beauty</a>
+          <a href="/category/beauty">Shop all beauty</a>
         </div>
         {beautyProducts.length ? (
           <ProductGrid products={beautyProducts} />
@@ -227,6 +228,8 @@ interface ListingOptions {
   description: string;
   activeCategory?: string;
   categoryFilter?: string;
+  /** Any of these categories (the beauty page). */
+  categoriesFilter?: string[];
   intro?: unknown;
   emptyTitle: string;
   emptyMessage: string;
@@ -240,6 +243,7 @@ async function renderListing(c: Context<AppBindings>, opts: ListingOptions) {
 
   let { items, total } = await queryProducts(c.env, {
     categorySlug: opts.categoryFilter,
+    categorySlugs: opts.categoriesFilter,
     sort,
     limit: PER_PAGE,
     offset: (requestedPage - 1) * PER_PAGE,
@@ -250,6 +254,7 @@ async function renderListing(c: Context<AppBindings>, opts: ListingOptions) {
     page = totalPages;
     ({ items } = await queryProducts(c.env, {
       categorySlug: opts.categoryFilter,
+    categorySlugs: opts.categoriesFilter,
       sort,
       limit: PER_PAGE,
       offset: (page - 1) * PER_PAGE,
@@ -332,6 +337,32 @@ storefront.get('/shop', async (c) =>
     ),
   }),
 );
+
+/** Every beauty product together: hair, skin & body, makeup & fragrance. */
+storefront.get('/category/beauty', async (c) => {
+  const intro = (
+    <div class="field">
+      <Breadcrumbs items={[{ label: 'Home', href: '/' }, { label: 'Shop', href: '/shop' }, { label: 'Beauty' }]} />
+      <h1>💄 Beauty</h1>
+      <p class="muted">Hair care, skin &amp; body care, makeup and fragrance from brands you know.</p>
+    </div>
+  );
+  return renderListing(c, {
+    basePath: '/category/beauty',
+    title: 'Beauty',
+    description: 'Shop genuine hair care, skin & body care, makeup and fragrance at 27beauty — UK dispatch, secure checkout.',
+    activeCategory: BEAUTY_CATEGORY_SLUG,
+    categoriesFilter: BEAUTY_CATEGORY_SLUGS,
+    intro,
+    emptyTitle: 'New beauty stock arriving soon',
+    emptyMessage: "We're still filling these shelves — browse everything else in the meantime.",
+    emptyAction: (
+      <a class="btn" href="/shop">
+        Browse all products
+      </a>
+    ),
+  });
+});
 
 storefront.get('/category/:slug', async (c) => {
   const slug = c.req.param('slug');

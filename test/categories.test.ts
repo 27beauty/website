@@ -6,7 +6,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../src/types';
-import { deleteCategory } from '../src/lib/db';
+import { BEAUTY_CATEGORY_SLUGS, deleteCategory, queryProducts } from '../src/lib/db';
 import { createTestD1 } from './helpers/d1';
 
 let env: Env;
@@ -65,5 +65,17 @@ describe('deleteCategory', () => {
   it("won't delete the homepage beauty category", async () => {
     expect((await deleteCategory(env, 1, 2)).ok).toBe(false);
     expect(count('SELECT COUNT(*) AS n FROM categories WHERE id = 1')).toBe(1);
+  });
+});
+
+describe('beauty across several categories', () => {
+  it('lists products from any of the beauty categories', async () => {
+    sql.exec(`
+      INSERT INTO categories (id, slug, name, sort_order) VALUES (5, 'skin-and-body-care', 'Skin & Body Care', 50), (6, 'makeup-and-fragrance', 'Makeup & Fragrance', 60);
+      INSERT INTO products (id, slug, title, price_pence, stock, category_id) VALUES
+        (10, 'shampoo', 'Shampoo', 500, 1, 1), (11, 'lotion', 'Lotion', 500, 1, 5), (12, 'mascara', 'Mascara', 500, 1, 6);
+    `);
+    const { items } = await queryProducts(env, { categorySlugs: BEAUTY_CATEGORY_SLUGS, sort: 'title' });
+    expect(items.map((p) => p.title)).toEqual(['Lotion', 'Mascara', 'Shampoo']);
   });
 });
