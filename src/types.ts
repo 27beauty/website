@@ -176,6 +176,8 @@ export interface Order {
   notes: string | null;
   stock_applied: number;
   parcel2go_order_id: string | null;
+  /** When it was last downloaded in the Parcel2Go Smart Send CSV. */
+  smartsend_exported_at?: string | null;
   parcel2go_payment_url: string | null;
   /** pushed (legacy unpaid draft) | booking | booked | error */
   parcel2go_status: string | null;

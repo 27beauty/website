@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import type { AppBindings, Order, OrderStatus, ShippingAddress } from '../../types';
 import { getAdmin, verifyCsrf } from '../../lib/admin-auth';
-import { AdminLayout, AdminPrintPage, CsrfField } from '../../ui/admin-layout';
+import { AdminLayout, AdminPrintPage, CsrfField, Guide } from '../../ui/admin-layout';
+import { countNewForSmartSend, markSentToSmartSend, ordersForSmartSend, smartSendCsv } from '../../lib/smartsend';
 import { formatPence } from '../../lib/money';
 import { clampInt, inChunks } from '../../lib/util';
 import { getOrderWithItems, restockCancelledOrder, type OrderWithItems } from '../../lib/orders';
@@ -253,6 +254,7 @@ orders.get('/', async (c) => {
   const query = c.req.query();
   const page = clampInt(query.page, 1, 100000, 1);
   const view = query.view === 'baskets' ? 'baskets' : query.view === 'shipping' ? 'shipping' : 'orders';
+  const smartSendNew = view === 'shipping' ? await countNewForSmartSend(c.env) : null;
   const allowedStatuses: readonly string[] =
     view === 'baskets' ? BASKET_STATUSES : view === 'shipping' ? SHIPPING_STATUSES : PAID_STATUSES;
   const status = query.status && allowedStatuses.includes(query.status) ? query.status : undefined;
@@ -319,11 +321,30 @@ orders.get('/', async (c) => {
         </p>
       ) : null}
       {view === 'shipping' ? (
-        <p class="muted" style="margin-top:-8px;margin-bottom:16px;">
-          Paid orders not yet fulfilled. "Book →" shows Parcel2Go quotes for the parcel — pick a courier
-          and it's paid from your PrePay balance, then "Label ↓" prints the label. An order drops off
-          this list once marked fulfilled.
-        </p>
+        <>
+          <Guide
+            what={`${total} paid order${total === 1 ? '' : 's'} waiting to be sent${smartSendNew !== null ? `, ${smartSendNew} not yet sent to Smart Send` : ''}.`}
+            why="Parcel2Go Smart Send books them in bulk from a spreadsheet: download it here, then upload it in Smart Send (Upload → Choose → Upload Spreadsheet)."
+            choices={[
+              { label: 'Download new orders', effect: "only orders you haven't downloaded before, so nothing is booked twice." },
+              { label: 'Download all again', effect: 'every paid order still waiting, e.g. if an upload failed.' },
+              { label: 'Book →', effect: 'one order at a time here, paid from your PrePay balance.' },
+            ]}
+          />
+          <form method="post" action="/admin/orders/smartsend.csv" class="row smartsend-form">
+            <CsrfField token={admin.csrf} />
+            <button class="btn" type="submit" name="scope" value="new" disabled={smartSendNew === 0}>
+              Download new orders for Smart Send{smartSendNew ? ` (${smartSendNew})` : ''}
+            </button>
+            <button class="btn btn-secondary" type="submit" name="scope" value="all" disabled={total === 0}>
+              Download all again
+            </button>
+          </form>
+          <p class="muted small">
+            Each row is one order as one parcel: items, value, weight and size (from each product's parcel size, or the
+            default in Settings) and the delivery address. Marked fulfilled orders drop off this list.
+          </p>
+        </>
       ) : null}
 
       <form method="get" action="/admin/orders" class="filter-bar">
@@ -592,6 +613,37 @@ async function loadOrder(
   if (!order) return null;
   return { order, items: order.items };
 }
+
+/**
+ * The Parcel2Go Smart Send spreadsheet: paid orders waiting to be sent, as a
+ * CSV download. "new" is only orders not downloaded before (they're marked,
+ * so the next download doesn't repeat them); "all" is every one still waiting.
+ */
+orders.post('/smartsend.csv', async (c) => {
+  const body = await c.req.parseBody();
+  if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
+    return c.redirect('/admin/orders?view=shipping&err=' + encodeURIComponent('Your session expired — please try again.'), 303);
+  }
+  const onlyNew = body.scope !== 'all';
+  const list = await ordersForSmartSend(c.env, onlyNew);
+  if (!list.length) {
+    return c.redirect(
+      '/admin/orders?view=shipping&msg=' + encodeURIComponent(onlyNew ? 'No new orders to send to Smart Send.' : 'No paid orders are waiting to be sent.'),
+      303,
+    );
+  }
+  const csv = await smartSendCsv(c.env, list);
+  await markSentToSmartSend(
+    c.env,
+    list.map((o) => o.id),
+  );
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  return c.body(csv, 200, {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': `attachment; filename="27beauty-smartsend-${stamp}.csv"`,
+    'Cache-Control': 'no-store',
+  });
+});
 
 orders.get('/:id', async (c) => {
   const admin = getAdmin(c);

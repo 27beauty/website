@@ -691,3 +691,6 @@ input[inputmode="decimal"], input[type="number"] { font-variant-numeric: tabular
 .listed-on a.stock-badge:hover { border-color: var(--brand); }
 .sku-main { display: block; font-variant-numeric: tabular-nums; }
 .sku-more { display: block; }
+
+/* Orders → Shipping: the Smart Send download buttons. */
+.smartsend-form { margin: 0 0 6px; gap: 8px; }

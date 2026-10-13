@@ -17,6 +17,11 @@ import type { ChannelListing } from '../../types';
  */
 export const stock = new Hono<AppBindings>();
 
+/** Listings you ship yourself. FBA stock sits in Amazon's warehouse and never changes this count. */
+function onlyShipped(map: Map<number, ChannelListing[]>): Map<number, ChannelListing[]> {
+  return new Map([...map].map(([id, list]) => [id, list.filter((l) => l.fulfilment === 'merchant')]));
+}
+
 const PER_PAGE = 100;
 
 interface StockRow extends ProductWithCategory {
@@ -36,7 +41,7 @@ stock.get('/', async (c) => {
   const where: string[] = ["p.status != 'archived'", 'p.merged_into IS NULL'];
   const params: unknown[] = [];
   if (channel) {
-    where.push(`EXISTS (SELECT 1 FROM channel_listings l WHERE l.product_id = p.id AND l.status = 'linked' AND l.account = ?)`);
+    where.push(`EXISTS (SELECT 1 FROM channel_listings l WHERE l.product_id = p.id AND l.status = 'linked' AND l.fulfilment = 'merchant' AND l.account = ?)`);
     params.push(channel);
   }
   const differs = `EXISTS (SELECT 1 FROM channel_listings l WHERE l.product_id = p.id AND l.status = 'linked'
@@ -71,7 +76,8 @@ stock.get('/', async (c) => {
          COUNT(*) AS total
        FROM products p WHERE p.status != 'archived' AND p.merged_into IS NULL`,
     ).first<{ out_of_stock: number; low: number; mismatched: number; units: number; total: number }>(),
-    c.env.DB.prepare(`SELECT DISTINCT account, channel FROM channel_listings WHERE status = 'linked' ORDER BY channel, account`).all<{
+    // FBA stock is Amazon's, not part of this count, so the Stock screen only shows listings you ship (FBM).
+    c.env.DB.prepare(`SELECT DISTINCT account, channel FROM channel_listings WHERE status = 'linked' AND fulfilment = 'merchant' ORDER BY channel, account`).all<{
       account: string;
       channel: string;
     }>(),
@@ -79,7 +85,7 @@ stock.get('/', async (c) => {
     centralStockEnabled(c.env),
   ]);
   const rows = results ?? [];
-  const listings = await listingsForProducts(c.env, rows.map((r) => r.id));
+  const listings = onlyShipped(await listingsForProducts(c.env, rows.map((r) => r.id)));
 
   const tab = (key: string, label: string, n?: number) => (
     <a
@@ -276,7 +282,7 @@ stock.get('/:id/history', async (c) => {
     stock: number;
   }>();
   if (!product) return c.text('Not found', 404);
-  const [moves, listings] = await Promise.all([movementsFor(c.env, id), listingsForProducts(c.env, [id])]);
+  const [moves, listings] = await Promise.all([movementsFor(c.env, id), listingsForProducts(c.env, [id]).then(onlyShipped)]);
   const central = await centralStockEnabled(c.env);
 
   return c.html(
