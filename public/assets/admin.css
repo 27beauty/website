@@ -694,3 +694,6 @@ input[inputmode="decimal"], input[type="number"] { font-variant-numeric: tabular
 
 /* Orders → Shipping: the Smart Send download buttons. */
 .smartsend-form { margin: 0 0 6px; gap: 8px; }
+
+/* Product page: merge a duplicate into another product. */
+.merge-into { flex: 1 1 18em; min-height: 40px; }

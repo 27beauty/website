@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { AppBindings, Category, ChannelListing, Coupon, Env, ProductStatus, ProductWithCategory } from '../../types';
-import { countDraftProducts, getProductById, listCategories } from '../../lib/db';
+import { countDraftProducts, getProductById, listCategories, listProductChoices } from '../../lib/db';
 import { getAdmin, verifyCsrf } from '../../lib/admin-auth';
 import { AdminLayout, CsrfField, Guide } from '../../ui/admin-layout';
 import { formatPence, penceToInput } from '../../lib/money';
@@ -9,7 +9,8 @@ import { randomToken } from '../../lib/crypto';
 import { basketCouponCode, couponQrUrl, formatCouponCode, productCouponCode, renderQrSvg } from '../../lib/qr';
 import { getSetting } from '../../lib/settings';
 import { centralStockEnabled, setStock } from '../../lib/stock';
-import { listingsForProducts, pushSoon } from '../../lib/channels';
+import { listingsForProducts, mergeProducts, pushSoon } from '../../lib/channels';
+import { productIdFromChoice } from './channels';
 import {
   canStore,
   deleteProductImages,
@@ -188,6 +189,39 @@ function ListedOn(props: { product: ProductWithCategory; listings: ChannelListin
         );
       })}
     </span>
+  );
+}
+
+/** "Is this a duplicate?": fold this product into another one that is the same item. */
+function MergePanel(props: { admin: { csrf: string }; product: ProductWithCategory; choices: Array<{ id: number; title: string; status: string }> }) {
+  return (
+    <section class="admin-panel stack">
+      <h3>Same item as another product?</h3>
+      <Guide
+        what="If this product is a duplicate of another (the same item listed twice), merge it into that one."
+        why="Two products for one item means two stock counts and two shop pages."
+        choices={[
+          {
+            label: 'Merge into it',
+            effect: 'its eBay/Amazon listings and QR coupons move to the other product, the higher of the two stock counts is kept, and this one is archived (not deleted).',
+          },
+        ]}
+      />
+      <form method="post" action={`/admin/products/${props.product.id}/merge`} class="row">
+        <CsrfField token={props.admin.csrf} />
+        <datalist id="merge-products">
+          {props.choices
+            .filter((c) => c.id !== props.product.id)
+            .map((c) => (
+              <option value={`${c.title} — #${c.id}`}>{c.status === 'active' ? '' : c.status}</option>
+            ))}
+        </datalist>
+        <input class="merge-into" type="text" name="into" list="merge-products" placeholder="Start typing the product to keep…" aria-label="Product to merge into" required />
+        <button class="btn btn-secondary" type="submit">
+          Merge into it
+        </button>
+      </form>
+    </section>
   );
 }
 
@@ -1130,6 +1164,7 @@ products.get('/:id', async (c) => {
         defaultPercent={defaultPercent}
         siteUrl={c.env.SITE_URL}
       />
+      {product.merged_into ? null : <MergePanel admin={admin} product={product} choices={await listProductChoices(c.env)} />}
     </AdminLayout>,
   );
 });
@@ -1391,6 +1426,30 @@ products.post('/:id', async (c) => {
   pushSoon(c.env, c.executionCtx, await setStock(c.env, [{ productId: id, quantity: stock }], 'admin', 'Product page'));
 
   return c.redirect(`/admin/products/${id}?msg=${encodeURIComponent('Saved.')}`, 303);
+});
+
+products.post('/:id/merge', async (c) => {
+  const id = Number(c.req.param('id'));
+  const body = await c.req.parseBody();
+  if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
+    return c.redirect(`/admin/products/${id}?err=` + encodeURIComponent('Your session expired — please try again.'), 303);
+  }
+  const into = productIdFromChoice(body.into);
+  const [product, target] = await Promise.all([getProductById(c.env, id), Number.isInteger(into) ? getProductById(c.env, into) : null]);
+  if (!product) return c.text('Not found', 404);
+  if (!target || target.merged_into) {
+    return c.redirect(`/admin/products/${id}?err=` + encodeURIComponent('Choose the product to keep from the list (start typing its name).'), 303);
+  }
+  if (target.id === product.id || product.merged_into) {
+    return c.redirect(`/admin/products/${id}?err=` + encodeURIComponent("A product can't be merged into itself."), 303);
+  }
+  await mergeProducts(c.env, target.id, [product.id]);
+  pushSoon(c.env, c.executionCtx, [target.id]);
+  return c.redirect(
+    `/admin/products/${target.id}?msg=` +
+      encodeURIComponent(`Merged "${product.title}" into this product. Its listings and coupons are here now, and it has been archived.`),
+    303,
+  );
 });
 
 products.post('/:id/duplicate', async (c) => {
