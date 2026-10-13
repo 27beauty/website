@@ -25,9 +25,28 @@ UPDATE ebay_category_map SET priority = 125
  WHERE match_type = 'keyword' AND match_value IN ('shampoo', 'conditioner')
    AND category_id = (SELECT id FROM categories WHERE slug = 'hair-beauty');
 
+-- One statement per new word: D1 limits how many parts a compound SELECT may have.
 INSERT INTO ebay_category_map (match_type, match_value, category_id, priority)
-SELECT 'keyword', w.word, c.id, w.priority
-  FROM (SELECT 'lipstick' AS word, 110 AS priority UNION ALL SELECT 'eyeliner', 110 UNION ALL SELECT 'nyx', 115
-        UNION ALL SELECT 'brow', 105 UNION ALL SELECT 'eyeshadow', 110 UNION ALL SELECT 'foundation', 100) w
-  JOIN categories c ON c.slug = 'makeup-and-fragrance'
- WHERE NOT EXISTS (SELECT 1 FROM ebay_category_map m WHERE m.match_type = 'keyword' AND m.match_value = w.word);
+SELECT 'keyword', 'lipstick', c.id, 110 FROM categories c
+ WHERE c.slug = 'makeup-and-fragrance'
+   AND NOT EXISTS (SELECT 1 FROM ebay_category_map m WHERE m.match_type = 'keyword' AND m.match_value = 'lipstick');
+INSERT INTO ebay_category_map (match_type, match_value, category_id, priority)
+SELECT 'keyword', 'eyeliner', c.id, 110 FROM categories c
+ WHERE c.slug = 'makeup-and-fragrance'
+   AND NOT EXISTS (SELECT 1 FROM ebay_category_map m WHERE m.match_type = 'keyword' AND m.match_value = 'eyeliner');
+INSERT INTO ebay_category_map (match_type, match_value, category_id, priority)
+SELECT 'keyword', 'nyx', c.id, 115 FROM categories c
+ WHERE c.slug = 'makeup-and-fragrance'
+   AND NOT EXISTS (SELECT 1 FROM ebay_category_map m WHERE m.match_type = 'keyword' AND m.match_value = 'nyx');
+INSERT INTO ebay_category_map (match_type, match_value, category_id, priority)
+SELECT 'keyword', 'brow', c.id, 105 FROM categories c
+ WHERE c.slug = 'makeup-and-fragrance'
+   AND NOT EXISTS (SELECT 1 FROM ebay_category_map m WHERE m.match_type = 'keyword' AND m.match_value = 'brow');
+INSERT INTO ebay_category_map (match_type, match_value, category_id, priority)
+SELECT 'keyword', 'eyeshadow', c.id, 110 FROM categories c
+ WHERE c.slug = 'makeup-and-fragrance'
+   AND NOT EXISTS (SELECT 1 FROM ebay_category_map m WHERE m.match_type = 'keyword' AND m.match_value = 'eyeshadow');
+INSERT INTO ebay_category_map (match_type, match_value, category_id, priority)
+SELECT 'keyword', 'foundation', c.id, 100 FROM categories c
+ WHERE c.slug = 'makeup-and-fragrance'
+   AND NOT EXISTS (SELECT 1 FROM ebay_category_map m WHERE m.match_type = 'keyword' AND m.match_value = 'foundation');
