@@ -1410,6 +1410,58 @@ export async function suggestionsFor(env: Env, listing: ChannelListing): Promise
  * - ignore: not tracked (it won't be counted or pushed).
  * - new: an Amazon-only item — becomes a draft product using the listing's count.
  */
+/**
+ * Marks every marketplace listing of a product 'blocked', so deleting the
+ * product sticks.
+ *
+ * Without this, deleting an eBay-sourced product undoes itself within ten
+ * minutes: the catalogue sync sees an item in the feed with no matching
+ * product and creates it again. The listing row is the right place to record
+ * it — channel_listings.product_id is ON DELETE SET NULL, so the row outlives
+ * the product, and upsertListings never rewrites status, so the block survives
+ * later imports too.
+ *
+ * 'blocked' is deliberately not 'ignored'. "Don't track" in Review matches is
+ * the owner saying they do not want a listing's stock counted; 86 listings
+ * already carry it. Reusing it here would quietly stop all of those importing
+ * a product as well, which is a different decision from the one they made.
+ *
+ * Call this BEFORE deleting the product: it reads the product's own eBay
+ * identity to cover the case where no listing row was ever created for it.
+ */
+export async function blockProductListings(env: Env, productId: number): Promise<void> {
+  const p = await env.DB.prepare(
+    `SELECT id, title, ebay_item_id, ebay_account FROM products WHERE id = ?`,
+  )
+    .bind(productId)
+    .first<{ id: number; title: string; ebay_item_id: string | null; ebay_account: string | null }>();
+  if (!p) return;
+
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare(
+      `UPDATE channel_listings
+          SET status = 'blocked', suggested_product_id = NULL, match_score = NULL, updated_at = datetime('now')
+        WHERE product_id = ?`,
+    ).bind(productId),
+  ];
+
+  // An eBay product whose listing row was never created still needs a block,
+  // or the next sync simply imports it again from the feed. channel_listings
+  // keys eBay items by their bare item number, not the 'v1|...|0' form.
+  if (p.ebay_item_id && p.ebay_account) {
+    const bare = /^v1\|([^|]+)\|/.exec(p.ebay_item_id)?.[1] ?? p.ebay_item_id;
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO channel_listings (channel, account, external_id, title, status)
+         VALUES ('ebay', ?, ?, ?, 'blocked')
+         ON CONFLICT(channel, account, external_id)
+         DO UPDATE SET status = 'blocked', product_id = NULL, updated_at = datetime('now')`,
+      ).bind(p.ebay_account, bare, p.title),
+    );
+  }
+  await env.DB.batch(statements);
+}
+
 export async function resolveListing(
   env: Env,
   listingId: number,

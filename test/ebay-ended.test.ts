@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/types';
 import { runEbaySync } from '../src/lib/ebay/sync';
+import { blockProductListings } from '../src/lib/channels';
 import { createTestD1, createTestKV } from './helpers/d1';
 
 interface Listing {
@@ -73,6 +74,48 @@ async function importOne(itemId: string, title: string): Promise<void> {
   exists = new Set([itemId]);
   await runEbaySync(env, 'manual');
 }
+
+describe('a product the owner deleted', () => {
+  // Deleting is useless if the next sync imports it straight back, which is
+  // what happened before: the item is still in eBay's feed with no matching
+  // product, so the sync creates it again within ten minutes.
+  async function importAndDelete(block: boolean): Promise<void> {
+    await importOne('v1|500|0', 'Moriah Elizabeth Giant Mystery Surprise');
+    expect(products()).toHaveLength(1);
+    const id = products()[0].id;
+    if (block) await blockProductListings(env, id);
+    sql.exec(`DELETE FROM products WHERE id = ${id}`);
+    expect(products()).toEqual([]);
+  }
+
+  it('is not imported again by the next sync', async () => {
+    await importAndDelete(true);
+    await runEbaySync(env, 'manual'); // item still live on eBay
+    expect(products()).toEqual([]);
+    // Deleting the product must not take the listing's record with it: that
+    // row is where the block lives (product_id is ON DELETE SET NULL).
+    expect(sql.all(`SELECT status, product_id FROM channel_listings WHERE external_id = '500'`)).toEqual([
+      { status: 'blocked', product_id: null },
+    ]);
+  });
+
+  it('would come straight back without the block — which is the bug this fixes', async () => {
+    await importAndDelete(false);
+    await runEbaySync(env, 'manual');
+    expect(products()).toHaveLength(1);
+  });
+
+  it('still imports everything else', async () => {
+    await importAndDelete(true);
+    live = [
+      { itemId: 'v1|500|0', title: 'Moriah Elizabeth Giant Mystery Surprise' },
+      { itemId: 'v1|501|0', title: 'Something Else Entirely' },
+    ];
+    exists = new Set(['v1|500|0', 'v1|501|0']);
+    await runEbaySync(env, 'manual');
+    expect(products().map((p) => p.title)).toEqual(['Something Else Entirely']);
+  });
+});
 
 describe('eBay sync: run bookkeeping', () => {
   it('closes a run the platform stopped mid-flight, and leaves a live one alone', async () => {

@@ -230,7 +230,8 @@ export interface ChannelListing {
   title: string;
   /** merchant = you ship it; amazon = FBA, never pushed to or counted. */
   fulfilment: 'merchant' | 'amazon';
-  status: 'linked' | 'review' | 'ignored';
+  /** 'blocked': the owner deleted the product, so this listing must not re-create it. */
+  status: 'linked' | 'review' | 'ignored' | 'blocked';
   match_score: number | null;
   suggested_product_id: number | null;
   channel_qty: number | null;

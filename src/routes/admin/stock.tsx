@@ -37,6 +37,9 @@ stock.get('/', async (c) => {
   const flash = flashOf(c);
   const view = c.req.query('view') ?? 'attention';
   const channel = c.req.query('channel') ?? '';
+  // Where Delete should return to, so the owner keeps the tab and channel they
+  // were looking at instead of being dropped on the product list.
+  const backUrl = `/admin/stock?view=${encodeURIComponent(view)}${channel ? `&channel=${encodeURIComponent(channel)}` : ''}`;
 
   const where: string[] = ["p.status != 'archived'", 'p.merged_into IS NULL'];
   const params: unknown[] = [];
@@ -190,9 +193,21 @@ stock.get('/', async (c) => {
                   step="1"
                   aria-label={`Stock for ${p.title}`}
                 />
-                <a class="small" href={`/admin/stock/${p.id}/history`}>
-                  History
-                </a>
+                <div class="stock-row-links">
+                  <a class="small" href={`/admin/stock/${p.id}/history`}>
+                    History
+                  </a>
+                  {/* A link, not a form: this row sits inside the Save stock
+                      form and HTML has no nested forms. It goes to the same
+                      confirmation step as Products, so nothing is deleted on a
+                      single stray click. */}
+                  <a
+                    class="small stock-delete"
+                    href={`/admin/products/${p.id}/delete?back=${encodeURIComponent(backUrl)}`}
+                  >
+                    Delete
+                  </a>
+                </div>
               </div>
             </li>
           ))}

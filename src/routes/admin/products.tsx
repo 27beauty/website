@@ -9,7 +9,7 @@ import { randomToken } from '../../lib/crypto';
 import { basketCouponCode, couponQrUrl, formatCouponCode, productCouponCode, renderQrSvg } from '../../lib/qr';
 import { getSetting } from '../../lib/settings';
 import { centralStockEnabled, setStock } from '../../lib/stock';
-import { listingsForProducts, mergeProducts, pushSoon } from '../../lib/channels';
+import { blockProductListings, listingsForProducts, mergeProducts, pushSoon } from '../../lib/channels';
 import { productIdFromChoice } from './channels';
 import {
   canStore,
@@ -1530,6 +1530,11 @@ products.get('/:id/delete', async (c) => {
           This permanently removes the product from the catalogue. Past orders keep their own copy of the line
           item, so order history is unaffected. This cannot be undone.
         </p>
+        <p class="muted">
+          Its eBay and Amazon listings are left alone and stay on sale there — but they are marked so the sync
+          will not put this product back on the website. Delete the listing on eBay or Amazon too if you want it
+          off those as well.
+        </p>
         <div class="row">
           <form method="post" action={`/admin/products/${id}/delete`}>
             <CsrfField token={admin.csrf} />
@@ -1554,12 +1559,18 @@ products.post('/:id/delete', async (c) => {
   if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
     return c.redirect(redirectWith(back, { err: 'Your session expired — please try again.' }), 303);
   }
+  // Before the row goes: mark its marketplace listings so the eBay sync does
+  // not simply import the product again on its next run (ten minutes later),
+  // which would make the delete look like it had not worked.
+  await blockProductListings(c.env, id);
   // Reclaim the product's stored photos too, or deleted products would keep
   // paying rent in R2 forever.
   const removed = await deleteProductImages(c.env, id);
   await c.env.DB.prepare('DELETE FROM products WHERE id = ?').bind(id).run();
+  // Back to wherever Delete was pressed — the Stock screen, say — rather than
+  // always to the product list.
   return c.redirect(
-    redirectWith('/admin/products', {
+    redirectWith(back, {
       msg: removed
         ? `Product deleted, along with ${removed} stored image${removed === 1 ? '' : 's'}.`
         : 'Product deleted.',

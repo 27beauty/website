@@ -226,6 +226,14 @@ async function syncAccount(
   }
 
   const diff = diffListings(existingRows, listings);
+  // A product the owner deleted must not come straight back. Deleting records
+  // a 'blocked' listing row (blockProductListings in channels.ts); without
+  // this filter the item is still in eBay's feed with no matching product, so
+  // the next run would simply import it again and the delete would look
+  // broken. Filtering diff.toCreate rather than the loop below also covers the
+  // relist path, which takes items back out of toCreate.
+  const blocked = await blockedExternalIds(env, accountKey);
+  if (blocked.size) diff.toCreate = diff.toCreate.filter((l) => !blocked.has(bareItemId(l.itemId)));
   const endings = await reconcileEndedListings(env, account, accountKey, diff, opts.budget);
   errors.push(...endings.errors);
   // First, so a relist's item id is freed from its duplicate before anything else writes it.
@@ -520,6 +528,16 @@ async function reconcileEndedListings(
 }
 
 /** Browse mode stores "v1|<item number>|0"; channel_listings keeps the bare item number. */
+/** Item numbers whose product the owner deleted — never import them again. */
+async function blockedExternalIds(env: Env, accountKey: string): Promise<Set<string>> {
+  const { results } = await env.DB.prepare(
+    `SELECT external_id FROM channel_listings WHERE channel = 'ebay' AND account = ? AND status = 'blocked'`,
+  )
+    .bind(accountKey)
+    .all<{ external_id: string }>();
+  return new Set((results ?? []).map((r) => r.external_id));
+}
+
 function bareItemId(itemId: string): string {
   const m = /^v1\|([^|]+)\|/.exec(itemId);
   return m ? m[1] : itemId;
