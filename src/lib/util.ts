@@ -130,3 +130,26 @@ export function generateOrderNumber(): string {
 export function normaliseCouponCode(code: string): string {
   return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
+
+/**
+ * Query string for a link on a paged, filtered admin list.
+ *
+ * `page` is dropped from the current query and only comes back if the caller
+ * passes one, so changing a filter returns to page 1 while Prev/Next keep
+ * working. Dropping it unconditionally — which both the Products and Orders
+ * lists used to do — meant every Prev/Next link was built without a page and
+ * always landed back on page 1.
+ *
+ * Empty values are left out, so a filter set back to "All" disappears from the
+ * URL rather than lingering as `status=`.
+ */
+export function listQueryString(
+  current: Record<string, string | undefined>,
+  overrides: Record<string, string | number | undefined> = {},
+): string {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries({ ...current, page: undefined, ...overrides })) {
+    if (v !== undefined && v !== '') params.set(k, String(v));
+  }
+  return params.toString();
+}

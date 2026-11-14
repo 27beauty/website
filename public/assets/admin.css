@@ -425,13 +425,23 @@ input[inputmode="decimal"], input[type="number"] { font-variant-numeric: tabular
 .filter-details .filter-bar { padding: 14px; margin-bottom: 0; border: 0; background: transparent; }
 
 @media (min-width: 900px) {
-  /* Plenty of room on a laptop — no reason to hide the filters there. The
-     summary is hidden, so the form must show whether or not [open] is set. */
-  .filter-details > summary { display: none; }
-  .filter-details { border: 0; background: transparent; }
-  .filter-details .filter-bar { padding: 0; }
-  .filter-details > .filter-bar { display: grid; }
-  .filter-details:not([open]) > .filter-bar { display: grid; }
+  /* Plenty of room on a laptop — no reason to hide a filter bar there, so it
+     is shown with its summary removed, open or not.
+     Only for panels that opt in with .filter-always. The same .filter-details
+     shell is also used for things that are meant to stay shut (Coupons'
+     bulk-generate form), and hiding the summary on those left no way to open
+     them at all.
+     Setting display on the form is not enough on its own: a closed <details>
+     hides its content through ::details-content { content-visibility: hidden }
+     in current browsers, which leaves the fields laid out but unpainted and
+     impossible to click — every filter on the page was dead on a laptop until
+     some filter happened to be active and set [open]. */
+  .filter-always > summary { display: none; }
+  .filter-always { border: 0; background: transparent; }
+  .filter-always .filter-bar { padding: 0; }
+  .filter-always > .filter-bar { display: grid; }
+  .filter-always:not([open]) > .filter-bar { display: grid; }
+  .filter-always::details-content { content-visibility: visible; block-size: auto; }
 }
 
 @media print { .filter-details { display: none; } }

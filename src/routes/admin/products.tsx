@@ -4,7 +4,7 @@ import { countDraftProducts, getProductById, listCategories, listProductChoices 
 import { getAdmin, verifyCsrf } from '../../lib/admin-auth';
 import { AdminLayout, CsrfField, Guide } from '../../ui/admin-layout';
 import { formatPence, penceToInput } from '../../lib/money';
-import { clampInt, inChunks, parseJsonArray, poundsToPence, uniqueSlug } from '../../lib/util';
+import { clampInt, inChunks, listQueryString, parseJsonArray, poundsToPence, uniqueSlug } from '../../lib/util';
 import { randomToken } from '../../lib/crypto';
 import { basketCouponCode, couponQrUrl, formatCouponCode, productCouponCode, renderQrSvg } from '../../lib/qr';
 import { getSetting } from '../../lib/settings';
@@ -283,13 +283,7 @@ products.get('/', async (c) => {
   const flash = flashOf(c);
   const backUrl = c.req.path + (new URL(c.req.url).search || '');
 
-  const qs = (overrides: Record<string, string | number | undefined>) => {
-    const params = new URLSearchParams();
-    for (const [k, v] of Object.entries({ ...query, ...overrides })) {
-      if (v !== undefined && v !== '' && k !== 'page') params.set(k, String(v));
-    }
-    return params.toString();
-  };
+  const qs = (overrides: Record<string, string | number | undefined> = {}) => listQueryString(query, overrides);
 
   return c.html(
     <AdminLayout title="Products" active="products" admin={admin} msg={flash.msg} err={flash.err}>
@@ -362,7 +356,7 @@ products.get('/', async (c) => {
       {/* Collapsed by default: the stock table is what the owner opens this
           page for, and an expanded filter form pushed it off a phone screen.
           Opens automatically when a filter is actually in use. */}
-      <details class="filter-details" open={Boolean(query.q || query.category || query.status || query.source || query.listed || query.lowStock)}>
+      <details class="filter-details filter-always" open={Boolean(query.q || query.category || query.status || query.source || query.listed || query.lowStock)}>
         <summary>Search &amp; filter</summary>
       <form method="get" action="/admin/products" class="filter-bar">
         <div class="field field-wide">

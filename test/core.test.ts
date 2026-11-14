@@ -7,6 +7,7 @@ import {
   excerpt,
   generateOrderNumber,
   isEmail,
+  listQueryString,
   normaliseCouponCode,
   parseJsonArray,
   poundsToPence,
@@ -172,5 +173,32 @@ describe('crypto', () => {
   it('salts each hash differently', async () => {
     const [a, b] = await Promise.all([hashPassword('same', 1000), hashPassword('same', 1000)]);
     expect(a).not.toBe(b);
+  });
+});
+
+describe('links on a paged, filtered admin list', () => {
+  it('keeps the page when one is asked for — Next and Prev depended on this', () => {
+    // The bug: `page` was stripped unconditionally, so every Next/Prev link
+    // was built without one and the list never moved off page 1.
+    expect(listQueryString({ page: '1' }, { page: 2 })).toBe('page=2');
+    expect(listQueryString({ q: 'kettle', page: '3' }, { page: 4 })).toBe('q=kettle&page=4');
+  });
+
+  it('drops the page when a filter changes, so a new filter starts at the top', () => {
+    expect(listQueryString({ q: 'kettle', page: '7' }, { category: 3 })).toBe('q=kettle&category=3');
+  });
+
+  it('carries the other filters through while paging', () => {
+    expect(listQueryString({ category: '5', status: 'draft', page: '1' }, { page: 2 })).toBe(
+      'category=5&status=draft&page=2',
+    );
+  });
+
+  it('leaves an emptied filter out of the link instead of leaving "status=" behind', () => {
+    expect(listQueryString({ status: 'draft', category: '5' }, { status: '' })).toBe('category=5');
+  });
+
+  it('returns nothing for an unfiltered first page', () => {
+    expect(listQueryString({ page: '2' })).toBe('');
   });
 });

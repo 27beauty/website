@@ -12,7 +12,7 @@ import {
   type SmartSendScope,
 } from '../../lib/smartsend';
 import { formatPence } from '../../lib/money';
-import { clampInt, inChunks } from '../../lib/util';
+import { clampInt, inChunks, listQueryString } from '../../lib/util';
 import { getOrderWithItems, restockCancelledOrder, type OrderWithItems } from '../../lib/orders';
 import { pushSoon } from '../../lib/channels';
 import { getSetting } from '../../lib/settings';
@@ -293,13 +293,7 @@ orders.get('/', async (c) => {
   const flash = flashOf(c);
   const results = listRes.results ?? [];
 
-  const qs = (overrides: Record<string, string | number | undefined>) => {
-    const p = new URLSearchParams();
-    for (const [k, v] of Object.entries({ ...query, ...overrides })) {
-      if (v !== undefined && v !== '' && k !== 'page') p.set(k, String(v));
-    }
-    return p.toString();
-  };
+  const qs = (overrides: Record<string, string | number | undefined> = {}) => listQueryString(query, overrides);
 
   return c.html(
     <AdminLayout title="Orders" active="orders" admin={admin} msg={flash.msg} err={flash.err}>
