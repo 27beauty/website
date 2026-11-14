@@ -275,6 +275,52 @@ interface RawCatalogItem {
     product_description?: { value?: string; marketplace_id?: string }[];
     bullet_point?: { value?: string; marketplace_id?: string }[];
   };
+  /** Catalogue dimensions hang off the ASIN, and use camelCase marketplaceId. */
+  dimensions?: {
+    marketplaceId?: string;
+    item?: { length?: RawMeasure; width?: RawMeasure; height?: RawMeasure; weight?: RawMeasure };
+    package?: { length?: RawMeasure; width?: RawMeasure; height?: RawMeasure; weight?: RawMeasure };
+  }[];
+}
+
+/**
+ * Package size and weight from Amazon's catalogue entry for an ASIN.
+ *
+ * A seller reselling against someone else's ASIN usually submits no
+ * dimensions of their own, so their listing carries none — in production only
+ * one of the first nineteen products had them. The catalogue record for the
+ * ASIN is where they actually live.
+ *
+ * `package` is preferred over `item`: the posted parcel is what a courier
+ * charges for. Falls back to the bare item measurements, which are at worst
+ * an underestimate of the box, and still better than a fixed default.
+ */
+export function mapCatalogParcel(raw: RawCatalogItem): AmazonParcel {
+  const d = (raw.dimensions ?? []).find((x) => !x.marketplaceId || x.marketplaceId === UK_MARKETPLACE);
+  const pick = (which: 'package' | 'item') => {
+    const src = d?.[which];
+    const cm = (m: RawMeasure | undefined) => {
+      const v = measure(m, TO_CM, 300);
+      return v === null ? null : Math.round(v * 10) / 10;
+    };
+    const g = measure(src?.weight, TO_G, 100_000);
+    return { weightG: g === null ? null : Math.round(g), lengthCm: cm(src?.length), widthCm: cm(src?.width), heightCm: cm(src?.height) };
+  };
+  const pkg = pick('package');
+  const item = pick('item');
+  return {
+    weightG: pkg.weightG ?? item.weightG,
+    lengthCm: pkg.lengthCm ?? item.lengthCm,
+    widthCm: pkg.widthCm ?? item.widthCm,
+    heightCm: pkg.heightCm ?? item.heightCm,
+  };
+}
+
+/** Package size and weight from the catalogue entry for an ASIN (one request). */
+export async function getCatalogParcel(env: Env, counter: CallCounter, asin: string): Promise<AmazonParcel> {
+  const params = new URLSearchParams({ marketplaceIds: UK_MARKETPLACE, includedData: 'dimensions' });
+  const raw = await sp<RawCatalogItem>(env, counter, `/catalog/2022-04-01/items/${encodeURIComponent(asin)}?${params.toString()}`);
+  return mapCatalogParcel(raw);
 }
 
 /**

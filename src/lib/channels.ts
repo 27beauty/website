@@ -31,6 +31,7 @@ import {
   AmazonThrottledError,
   getCatalogDescription,
   getListingDetails,
+  getCatalogParcel,
   getListingParcel,
   searchListingsPage,
   setMerchantQuantity,
@@ -1072,7 +1073,7 @@ export async function fillAmazonDimensions(
   max = 10,
 ): Promise<{ read: number; filled: number; errors: string[] }> {
   const { results } = await env.DB.prepare(
-    `SELECT p.id, l.external_id AS sku
+    `SELECT p.id, l.external_id AS sku, MAX(l.asin) AS asin
        FROM products p
        JOIN channel_listings l ON l.product_id = p.id AND l.channel = 'amazon' AND l.status = 'linked'
       WHERE p.merged_into IS NULL AND p.status != 'archived'
@@ -1083,7 +1084,7 @@ export async function fillAmazonDimensions(
       LIMIT ?`,
   )
     .bind(max)
-    .all<{ id: number; sku: string }>();
+    .all<{ id: number; sku: string; asin: string | null }>();
   const rows = results ?? [];
   if (!rows.length) return { read: 0, filled: 0, errors: [] };
 
@@ -1101,6 +1102,25 @@ export async function fillAmazonDimensions(
       if (err instanceof AmazonThrottledError) break; // the rest on a later run
       errors.push(`Amazon ${r.sku}: ${errorText(err)}`);
       continue; // not stamped, so it is tried again rather than written off
+    }
+    // Reselling against someone else's ASIN means submitting no dimensions of
+    // your own, so most listings carry none and the catalogue entry for the
+    // ASIN is where they are. Only asked for when the listing came back blank,
+    // and in its own try: a catalogue miss must not throw away what the
+    // listing did give us.
+    if (r.asin && parcel.weightG === null && parcel.lengthCm === null && budget.take()) {
+      try {
+        const fromCatalogue = await getCatalogParcel(env, counter, r.asin);
+        parcel = {
+          weightG: parcel.weightG ?? fromCatalogue.weightG,
+          lengthCm: parcel.lengthCm ?? fromCatalogue.lengthCm,
+          widthCm: parcel.widthCm ?? fromCatalogue.widthCm,
+          heightCm: parcel.heightCm ?? fromCatalogue.heightCm,
+        };
+      } catch (err) {
+        if (err instanceof AmazonThrottledError) break;
+        errors.push(`Amazon catalogue ${r.asin}: ${errorText(err)}`);
+      }
     }
     read++;
     if (parcel.weightG !== null || parcel.lengthCm !== null || parcel.widthCm !== null || parcel.heightCm !== null) filled++;

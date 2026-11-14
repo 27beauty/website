@@ -46,6 +46,7 @@ interface FakeWorld {
   amazonListings: unknown[];
   amazonOrders: unknown[];
   amazonItems: Record<string, unknown[]>;
+  amazonCatalogue?: Record<string, unknown>;
   revised: { seller: string; itemId: string; quantity: number }[];
   /** getListingsItem (summaries, offers, attributes) per Amazon SKU. */
   amazonDetails?: Record<string, unknown>;
@@ -104,6 +105,10 @@ function installFakeFetch(world: FakeWorld) {
       if (url.pathname.startsWith(`/listings/2021-08-01/items/${SELLER}/`) && (init.method ?? 'GET') === 'GET') {
         const sku = decodeURIComponent(url.pathname.split('/').pop() as string);
         return Response.json(world.amazonDetails?.[sku] ?? {});
+      }
+      if (url.pathname.startsWith('/catalog/2022-04-01/items/')) {
+        const asin = decodeURIComponent(url.pathname.split('/').pop() as string);
+        return Response.json(world.amazonCatalogue?.[asin] ?? {});
       }
       if (url.pathname.startsWith(`/listings/2021-08-01/items/${SELLER}/`) && init.method === 'PATCH') {
         const sku = decodeURIComponent(url.pathname.split('/').pop() as string);
@@ -684,6 +689,45 @@ describe('parcel size and weight for Parcel2Go', () => {
     const budget = new Budget(20);
     await fillAmazonDimensions(env, budget);
     expect(budget.remaining).toBe(20);
+  });
+
+  it('falls back to the catalogue when the listing carries no dimensions', async () => {
+    // The common case for a reseller: the listing is theirs but the ASIN is
+    // someone else's, so the measurements live on the catalogue entry.
+    await goLive();
+    amazonSays('AMZ-TSU', {});
+    const asin = (sql.all(`SELECT asin FROM channel_listings WHERE external_id = 'AMZ-TSU'`)[0] as { asin: string }).asin;
+    world.amazonCatalogue = {
+      [asin]: {
+        dimensions: [
+          {
+            marketplaceId: 'A1F83G8C2ARO7P',
+            item: { weight: { value: 99, unit: 'grams' } },
+            package: { length: { value: 8, unit: 'inches' }, width: { value: 4, unit: 'inches' }, height: { value: 2, unit: 'inches' }, weight: { value: 1, unit: 'pounds' } },
+          },
+        ],
+      },
+    };
+    await fillAmazonDimensions(env, new Budget(20));
+    // The posted package wins over the bare item: that is what is charged for.
+    expect(sizeOf(3)).toEqual({ weight_g: 454, length_cm: 20.3, width_cm: 10.2, height_cm: 5.1, checked: 1 });
+  });
+
+  it('does not ask the catalogue when the listing already answered', async () => {
+    await goLive();
+    amazonSays('AMZ-TSU', { item_package_weight: [{ value: 250, unit: 'g' }], item_package_dimensions: [{ length: { value: 10, unit: 'cm' } }] });
+    world.amazonCatalogue = { WRONG: { dimensions: [{ package: { weight: { value: 9, unit: 'kg' } } }] } };
+    await fillAmazonDimensions(env, new Budget(20));
+    expect((sizeOf(3) as { weight_g: number }).weight_g).toBe(250);
+  });
+
+  it('keeps what the listing gave when the catalogue lookup fails', async () => {
+    await goLive();
+    amazonSays('AMZ-TSU', { item_package_weight: [{ value: 300, unit: 'g' }] });
+    // No size on the listing, and the catalogue errors — the weight must survive.
+    world.amazonCatalogue = undefined;
+    await fillAmazonDimensions(env, new Budget(20));
+    expect((sizeOf(3) as { weight_g: number; checked: number }).weight_g).toBe(300);
   });
 
   it('leaves a product with no Amazon listing alone — Amazon cannot say anything about it', async () => {
