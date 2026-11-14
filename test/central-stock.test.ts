@@ -13,6 +13,7 @@ import {
   dirtyListings,
   enableCentralStock,
   ensureEbayListingRows,
+  LINK_REVIEWED_EBAY_LISTINGS,
   importAmazonListings,
   importEbayListings,
   mergeDuplicateProducts,
@@ -437,6 +438,42 @@ describe('once switched on', () => {
     expect(sql.all(`SELECT product_id, status FROM channel_listings WHERE external_id = '777'`)).toEqual([{ product_id: 70, status: 'linked' }]);
     expect(stockOf(70)).toBe(20);
     expect(world.revised.find((r) => r.itemId === '777')).toBeUndefined(); // nothing wrong pushed out
+  });
+
+  it('does not re-run housekeeping while the eBay products are unchanged', async () => {
+    // First run takes the watermark of the current products.
+    await runStockJob(env, new Date('2099-01-01T00:30:00Z'));
+    // A listing read from eBay for a product that already exists is linked by
+    // importEbayListings inline, so the cron copy has nothing to do here. It
+    // must stay parked: proof the five-minute job skipped the scan entirely
+    // rather than doing the work again.
+    sql.exec(`INSERT INTO channel_listings (channel, account, external_id, title, status, channel_qty, pushed_qty)
+              VALUES ('ebay', 'adinath0', '888', 'Parked', 'review', 5, 5)`);
+    await runStockJob(env, new Date('2099-01-01T00:35:00Z'));
+    expect(sql.all(`SELECT status FROM channel_listings WHERE external_id = '888'`)).toEqual([{ status: 'review' }]);
+
+    // ...and it resumes the moment a product actually changes.
+    sql.exec(`INSERT INTO products (id, slug, title, price_pence, stock, source, ebay_item_id, ebay_account, ebay_stock)
+              VALUES (88, 'parked', 'Parked', 999, 4, 'ebay', 'v1|888|0', 'adinath0', 4)`);
+    await runStockJob(env, new Date('2099-01-01T00:40:00Z'));
+    expect(sql.all(`SELECT product_id, status FROM channel_listings WHERE external_id = '888'`)).toEqual([
+      { product_id: 88, status: 'linked' },
+    ]);
+  });
+
+  it('links reviewed listings without scanning products once per listing', () => {
+    // Guards the shape of the query, not just its result. The version this
+    // replaced matched with `ebay_item_id LIKE 'v1|' || external_id || '|%'`,
+    // a pattern built from the row being matched, which no index can serve:
+    // SQLite scanned all of products for every listing in review, twice over
+    // (once for SET, once for EXISTS). On the five-minute cron that cost
+    // millions of D1 rows_read a day against a 5,000,000 cap. Keep products
+    // read once, however this query is rewritten.
+    const plan = sql
+      .all(`EXPLAIN QUERY PLAN ${LINK_REVIEWED_EBAY_LISTINGS}`)
+      .map((r) => String((r as { detail: string }).detail));
+    expect(plan.join('\n')).not.toMatch(/CORRELATED/);
+    expect(plan.filter((d) => /\bSCAN\b/.test(d) && /\bp\b/.test(d))).toEqual([]);
   });
 
   it('an Amazon FBM sale comes off and updates eBay; FBA orders are ignored', async () => {

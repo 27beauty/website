@@ -78,6 +78,32 @@ async function connectedEbayAccounts(env: Env): Promise<EbayAccount[]> {
 // ---------------------------------------------------------------------------
 
 /** Every eBay product the sync created gets a linked listing row (cheap, DB only). */
+/**
+ * Links listings parked in Review matches to the product the sync has since
+ * created, matching on shop + eBay item number.
+ *
+ * Exported so `test/central-stock.test.ts` can assert its query plan. The
+ * shape matters as much as the result: an earlier version matched with a
+ * correlated subquery whose LIKE pattern was built from the row being matched
+ * (`'v1|' || external_id || '|%'`), which no index can serve. SQLite scanned
+ * the whole products table once per listing in review — twice over, for SET
+ * and for EXISTS. Run every five minutes, a standing review backlog burned
+ * millions of D1 rows_read a day against the free tier's 5,000,000 cap.
+ * Products is now read once and joined; MIN(p.id) keeps "lowest id wins".
+ */
+export const LINK_REVIEWED_EBAY_LISTINGS = `UPDATE channel_listings AS cl
+    SET product_id = m.pid, status = 'linked', match_score = 1, suggested_product_id = NULL,
+        pushed_qty = COALESCE(cl.pushed_qty, cl.channel_qty), updated_at = datetime('now')
+   FROM (SELECT MIN(p.id) AS pid, p.ebay_account AS acct,
+                CASE WHEN p.ebay_item_id LIKE 'v1|%|%'
+                     THEN substr(p.ebay_item_id, 4, instr(substr(p.ebay_item_id, 4), '|') - 1)
+                     ELSE p.ebay_item_id END AS ext
+           FROM products p
+          WHERE p.source = 'ebay' AND p.merged_into IS NULL AND p.ebay_item_id IS NOT NULL
+          GROUP BY acct, ext) AS m
+  WHERE cl.channel = 'ebay' AND cl.status = 'review' AND cl.product_id IS NULL
+    AND m.acct = cl.account AND m.ext = cl.external_id`;
+
 export async function ensureEbayListingRows(env: Env): Promise<void> {
   await env.DB.prepare(
     `INSERT OR IGNORE INTO channel_listings (product_id, channel, account, external_id, sku, title, status, match_score, channel_qty)
@@ -93,16 +119,17 @@ export async function ensureEbayListingRows(env: Env): Promise<void> {
   // A listing read from eBay before the sync created its product was parked
   // in Review matches; once the product exists it's the same listing (same
   // shop, same item number), so link it instead of leaving it waiting.
-  const sameItem = `SELECT p.id FROM products p
-     WHERE p.source = 'ebay' AND p.merged_into IS NULL AND p.ebay_account = channel_listings.account
-       AND (p.ebay_item_id = channel_listings.external_id OR p.ebay_item_id LIKE 'v1|' || channel_listings.external_id || '|%')
-     ORDER BY p.id LIMIT 1`;
-  const linked = await env.DB.prepare(
-    `UPDATE channel_listings
-        SET product_id = (${sameItem}), status = 'linked', match_score = 1, suggested_product_id = NULL,
-            pushed_qty = COALESCE(pushed_qty, channel_qty), updated_at = datetime('now')
-      WHERE channel = 'ebay' AND status = 'review' AND product_id IS NULL AND EXISTS (${sameItem})`,
-  ).run();
+  //
+  // Written as a join against a materialised set rather than a correlated
+  // subquery. The obvious version — `product_id = (SELECT ... WHERE
+  // p.ebay_item_id LIKE 'v1|' || external_id || '|%')` — cannot use an index,
+  // because the LIKE pattern is built from the row being matched. SQLite
+  // therefore scanned the whole products table once per listing in review,
+  // twice over (once for SET, once for EXISTS). This job runs every five
+  // minutes, so a standing backlog of listings in review quietly burned
+  // millions of D1 rows_read a day against the free tier's 5,000,000 cap.
+  // Here products is read once; `MIN(p.id)` keeps the old "lowest id wins".
+  const linked = await env.DB.prepare(LINK_REVIEWED_EBAY_LISTINGS).run();
   // Their products were created from the sync's rough "in stock" figure:
   // take the listing's real quantity as the first count before anything is pushed.
   if (linked.meta.changes) await startNewProducts(env, 'ebay');
@@ -1156,6 +1183,38 @@ export interface StockJobSummary {
   errors: string[];
 }
 
+/**
+ * True when the set of eBay products has changed since housekeeping last ran,
+ * and records the new state.
+ *
+ * Reconciling products against listings only has anything to do once those
+ * products change. `importEbayListings` already does it inline; the copy on
+ * the five-minute stock cron is there to catch products created by the
+ * ten-minute catalogue sync, which does not call it itself. Ungated, that
+ * pair ran 288 times a day — a listings-to-products join plus a full products
+ * scan — and found nothing almost every time: in production 8,838 sync runs
+ * had created 161 products in total. It was the bulk of this worker's D1
+ * rows_read against the free tier's 5,000,000 daily cap.
+ *
+ * The watermark is taken from the products table itself, not from sync
+ * bookkeeping, so it is correct however a product arrives — the catalogue
+ * sync, an admin edit, a test. Row count and highest id catch inserts and
+ * deletes; the latest updated_at catches an edit to an existing row, so a
+ * product whose eBay item number changes is noticed too.
+ */
+async function ebayProductsChanged(env: Env): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS top, COALESCE(MAX(updated_at), '') AS last
+       FROM products
+      WHERE source = 'ebay' AND ebay_item_id IS NOT NULL`,
+  ).first<{ n: number; top: number; last: string }>();
+  const mark = `${row?.n ?? 0}:${row?.top ?? 0}:${row?.last ?? ''}`;
+  const seen = await getSetting<string | null>(env, 'stock.housekeeping_mark', null);
+  if (seen === mark) return false;
+  await setSetting(env, 'stock.housekeeping_mark', mark);
+  return true;
+}
+
 /** Runs every 5 minutes (wrangler.toml). */
 export async function runStockJob(env: Env, now = new Date()): Promise<StockJobSummary> {
   const budget = new Budget(CRON_BUDGET);
@@ -1164,7 +1223,7 @@ export async function runStockJob(env: Env, now = new Date()): Promise<StockJobS
   // Nothing changes on the shop until the owner has started setting this up
   // (connected a shop): merging archives the spare copy of a duplicate.
   const connected = await connectedEbayAccounts(env);
-  if (connected.length) {
+  if (connected.length && (await ebayProductsChanged(env))) {
     try {
       await ensureEbayListingRows(env);
       summary.merged = await mergeDuplicateProducts(env);
