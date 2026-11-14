@@ -41,9 +41,11 @@ function redirectWith(base: string, params: Record<string, string | undefined>):
 /* Listing                                                                 */
 /* ---------------------------------------------------------------------- */
 
-interface AdminProductQuery {
+export interface AdminProductQuery {
   q?: string;
   categoryId?: number;
+  /** category=none: the products that have not been filed anywhere. */
+  uncategorised?: boolean;
   status?: string;
   source?: string;
   lowStock?: boolean;
@@ -53,7 +55,8 @@ interface AdminProductQuery {
   page: number;
 }
 
-async function queryAdminProducts(
+/** Exported for test/categories.test.ts: the category filter and sort are easy to get subtly wrong. */
+export async function queryAdminProducts(
   env: Env,
   q: AdminProductQuery,
 ): Promise<{ items: ProductWithCategory[]; total: number }> {
@@ -65,7 +68,9 @@ async function queryAdminProducts(
     where.push('p.status = ?');
     params.push(q.status);
   }
-  if (q.categoryId) {
+  if (q.uncategorised) {
+    where.push('p.category_id IS NULL');
+  } else if (q.categoryId) {
     where.push('p.category_id = ?');
     params.push(q.categoryId);
   }
@@ -96,6 +101,9 @@ async function queryAdminProducts(
       price_desc: 'p.price_pence DESC',
       stock_asc: 'p.stock ASC, p.title ASC',
       stock_desc: 'p.stock DESC, p.title ASC',
+      // Groups the list by category in the order they appear in the shop, with
+      // anything unfiled last rather than first (SQLite sorts NULL first).
+      category: '(p.category_id IS NULL) ASC, c.sort_order ASC, c.name ASC, p.title ASC',
     }[q.sort ?? 'newest'] ?? 'p.created_at DESC, p.id DESC';
 
   const offset = (Math.max(q.page, 1) - 1) * PER_PAGE;
@@ -256,7 +264,8 @@ products.get('/', async (c) => {
   const page = clampInt(query.page, 1, 100000, 1);
   const q: AdminProductQuery = {
     q: query.q,
-    categoryId: query.category ? Number(query.category) : undefined,
+    categoryId: query.category && query.category !== 'none' ? Number(query.category) : undefined,
+    uncategorised: query.category === 'none',
     status: query.status,
     source: query.source,
     listed: query.listed,
@@ -322,6 +331,34 @@ products.get('/', async (c) => {
         />
       ) : null}
 
+      {/* Categories as one-tap chips, above everything else. The same choice
+          exists in the filter panel below, but that is collapsed by default,
+          so filing and checking a category took three taps. Order follows the
+          shop's own, so this reads the way the storefront does. */}
+      <div class="chip-row">
+        <span class="chip-label">Category</span>
+        <a class="chip" aria-current={query.category ? undefined : 'page'} href={`/admin/products?${qs({ category: '' })}`}>
+          All
+        </a>
+        {cats.map((cat: Category) => (
+          <a
+            class="chip"
+            aria-current={query.category === String(cat.id) ? 'page' : undefined}
+            href={`/admin/products?${qs({ category: cat.id })}`}
+          >
+            {cat.name}
+          </a>
+        ))}
+        <a
+          class="chip"
+          aria-current={query.category === 'none' ? 'page' : undefined}
+          href={`/admin/products?${qs({ category: 'none' })}`}
+          title="Products filed under no category — they show nowhere when a customer browses"
+        >
+          No category
+        </a>
+      </div>
+
       {/* Collapsed by default: the stock table is what the owner opens this
           page for, and an expanded filter form pushed it off a phone screen.
           Opens automatically when a filter is actually in use. */}
@@ -341,6 +378,9 @@ products.get('/', async (c) => {
                 {cat.name}
               </option>
             ))}
+            <option value="none" selected={query.category === 'none'}>
+              No category
+            </option>
           </select>
         </div>
         <div class="field">
@@ -390,6 +430,7 @@ products.get('/', async (c) => {
               ['price_desc', 'Price ↓'],
               ['stock_asc', 'Stock ↑'],
               ['stock_desc', 'Stock ↓'],
+              ['category', 'Category'],
             ].map(([val, label]) => (
               <option value={val} selected={(query.sort ?? 'newest') === val}>
                 {label}

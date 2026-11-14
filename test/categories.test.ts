@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BEAUTY_CATEGORY_SLUGS, deleteCategory, queryProducts } from '../src/lib/db';
 import { loadCategoryRules, mapCategory } from '../src/lib/ebay/mapping';
+import { queryAdminProducts } from '../src/routes/admin/products';
 import { createTestD1 } from './helpers/d1';
 
 let env: Env;
@@ -101,5 +102,57 @@ describe('beauty keyword rules', () => {
     expect(mapCategory({ title: 'Philips Lumea 9900 Series, IPL Hair Removal Device' }, rules, null)).toBe(5);
     expect(mapCategory({ title: 'Lavazza Espresso Beans 1kg' }, rules, null)).toBe(2);
     expect(mapCategory({ title: 'Triple Pack Multiple Hooks' }, rules, null)).toBeNull(); // "ipl" is a word, not a substring
+  });
+});
+
+describe('Admin → Products, filtering and sorting by category', () => {
+  beforeEach(() => {
+    // Shop order, not id order, so "sorted by category" can be told apart
+    // from "sorted by id".
+    sql.exec(`
+      UPDATE categories SET sort_order = 10 WHERE id = 1;  -- make-up
+      UPDATE categories SET sort_order = 20 WHERE id = 2;  -- coffee-tea
+      UPDATE categories SET sort_order = 30 WHERE id = 3;  -- snacks
+      INSERT INTO products (id, slug, title, price_pence, stock, category_id) VALUES
+        (20, 'unfiled-a', 'Unfiled A', 100, 1, NULL),
+        (21, 'filed-snack', 'Filed Snack', 100, 1, 3),
+        (22, 'unfiled-b', 'Unfiled B', 100, 1, NULL);
+    `);
+  });
+
+  it('shows only the chosen category', async () => {
+    const { items, total } = await queryAdminProducts(env, { categoryId: 2, page: 1 });
+    expect(items.map((p) => p.title).sort()).toEqual(['Coffee', 'Tea']);
+    expect(total).toBe(2);
+  });
+
+  it('shows the products filed nowhere, which show nowhere on the shop', async () => {
+    const { items, total } = await queryAdminProducts(env, { uncategorised: true, page: 1 });
+    expect(items.map((p) => p.title).sort()).toEqual(['Unfiled A', 'Unfiled B']);
+    expect(total).toBe(2);
+  });
+
+  it('counts every product when no category is chosen', async () => {
+    const { total } = await queryAdminProducts(env, { page: 1 });
+    expect(total).toBe(6);
+  });
+
+  it('groups by category in the order the shop shows them, unfiled last', async () => {
+    const { items } = await queryAdminProducts(env, { sort: 'category', page: 1 });
+    // SQLite sorts NULL first by default, so the unfiled ones would lead the
+    // list without the explicit "(category_id IS NULL) ASC" first key.
+    expect(items.map((p) => p.category_name ?? '—')).toEqual([
+      'Coffee & Tea',
+      'Coffee & Tea',
+      'Snacks',
+      'Snacks',
+      '—',
+      '—',
+    ]);
+  });
+
+  it('keeps the category filter and the sort working together', async () => {
+    const { items } = await queryAdminProducts(env, { categoryId: 3, sort: 'category', page: 1 });
+    expect(items.map((p) => p.title).sort()).toEqual(['Crisps', 'Filed Snack']);
   });
 });
