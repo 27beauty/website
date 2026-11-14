@@ -9,6 +9,7 @@ import type { EbayAccount, Env } from '../src/types';
 import { encryptSecret } from '../src/lib/crypto';
 import { adjustStock, setStock } from '../src/lib/stock';
 import {
+  adoptChannelCounts,
   Budget,
   dirtyListings,
   enableCentralStock,
@@ -521,5 +522,112 @@ describe('before setup starts', () => {
     await runStockJob(env, new Date('2099-01-01T00:00:00Z'));
     expect(sql.all('SELECT COUNT(*) AS n FROM products WHERE merged_into IS NOT NULL')).toEqual([{ n: 0 }]);
     expect(world.revised).toEqual([]);
+  });
+});
+
+describe('a count the owner changed on the marketplace', () => {
+  /** A linked listing: `sent` is what we last pushed, `shows` what it reports now. */
+  const listing = (o: { product: number; channel?: string; account?: string; ext: string; sent: number | null; shows: number | null }) =>
+    sql.exec(`INSERT INTO channel_listings (product_id, channel, account, external_id, title, status, fulfilment, channel_qty, pushed_qty)
+              VALUES (${o.product}, '${o.channel ?? 'ebay'}', '${o.account ?? 'adinath0'}', '${o.ext}', 'A listing', 'linked', 'merchant',
+                      ${o.shows ?? 'NULL'}, ${o.sent ?? 'NULL'})`);
+
+  it('takes a restock entered on eBay as the new master', async () => {
+    // Exactly the production case: the website pushed 0 out, the owner then
+    // put 95 back on eBay, and the site sat at "out of stock".
+    sql.exec(`UPDATE products SET stock = 0 WHERE id = 1`);
+    listing({ product: 1, ext: '111', sent: 0, shows: 95 });
+    expect(await adoptChannelCounts(env)).toBe(1);
+    expect(stockOf(1)).toBe(95);
+  });
+
+  it('takes a count the owner lowered on eBay too', async () => {
+    listing({ product: 1, ext: '111', sent: 10, shows: 3 });
+    await adoptChannelCounts(env);
+    expect(stockOf(1)).toBe(3);
+  });
+
+  it('does not undo a website sale whose push has not landed yet', async () => {
+    // The master dropped to 9; eBay still shows the 10 we last sent, because
+    // the push is still queued. The channel has not changed — adopting here
+    // would put the sold unit back and oversell it.
+    sql.exec(`UPDATE products SET stock = 9 WHERE id = 1`);
+    listing({ product: 1, ext: '111', sent: 10, shows: 10 });
+    expect(await adoptChannelCounts(env)).toBe(0);
+    expect(stockOf(1)).toBe(9);
+    // ...and the listing is still due a push, so it gets corrected instead.
+    expect((await dirtyListings(env, [1])).map((d) => d.external_id)).toEqual(['111']);
+  });
+
+  it('changes nothing when the channel is only carrying the number we gave it', async () => {
+    listing({ product: 1, ext: '111', sent: 10, shows: 10 });
+    expect(await adoptChannelCounts(env)).toBe(0);
+    expect(stockOf(1)).toBe(10);
+  });
+
+  it('carries a restock entered on eBay over to the same product on Amazon', async () => {
+    sql.exec(`UPDATE products SET stock = 0 WHERE id = 3`);
+    listing({ product: 3, ext: '333', sent: 0, shows: 12 });
+    listing({ product: 3, channel: 'amazon', account: 'A2SELLERTEST', ext: 'AMZ-TSU', sent: 0, shows: 0 });
+    await adoptChannelCounts(env);
+    expect(stockOf(3)).toBe(12);
+    // The eBay listing already shows 12, so only Amazon is left to update.
+    expect((await dirtyListings(env, [3])).map((d) => d.external_id)).toEqual(['AMZ-TSU']);
+  });
+
+  it('believes eBay over Amazon when both have changed', async () => {
+    listing({ product: 1, ext: '111', sent: 10, shows: 4 });
+    listing({ product: 1, channel: 'amazon', account: 'A2SELLERTEST', ext: 'AMZ-1', sent: 10, shows: 30 });
+    await adoptChannelCounts(env);
+    expect(stockOf(1)).toBe(4);
+  });
+
+  it('leaves a product whose stock the owner locked on the website', async () => {
+    sql.exec(`UPDATE products SET stock = 2, stock_locked = 1 WHERE id = 1`);
+    listing({ product: 1, ext: '111', sent: 2, shows: 50 });
+    expect(await adoptChannelCounts(env)).toBe(0);
+    expect(stockOf(1)).toBe(2);
+  });
+
+  it('leaves an archived product alone', async () => {
+    sql.exec(`UPDATE products SET stock = 0, status = 'archived' WHERE id = 1`);
+    listing({ product: 1, ext: '111', sent: 0, shows: 20 });
+    expect(await adoptChannelCounts(env)).toBe(0);
+    expect(stockOf(1)).toBe(0);
+  });
+
+  it('ignores an FBA listing, which Amazon ships and we never count', async () => {
+    sql.exec(`UPDATE products SET stock = 0 WHERE id = 1`);
+    sql.exec(`INSERT INTO channel_listings (product_id, channel, account, external_id, title, status, fulfilment, channel_qty, pushed_qty)
+              VALUES (1, 'amazon', 'A2SELLERTEST', 'AMZ-FBA', 'A listing', 'linked', 'amazon', 40, 0)`);
+    expect(await adoptChannelCounts(env)).toBe(0);
+    expect(stockOf(1)).toBe(0);
+  });
+
+  it('writes it to the stock history, so the owner can see where the number came from', async () => {
+    sql.exec(`UPDATE products SET stock = 0 WHERE id = 1`);
+    listing({ product: 1, ext: '111', sent: 0, shows: 95 });
+    await adoptChannelCounts(env);
+    expect(sql.all(`SELECT delta, reason, note FROM stock_movements WHERE product_id = 1`)).toEqual([
+      { delta: 95, reason: 'correction', note: 'Count taken from eBay' },
+    ]);
+  });
+
+  it('the five-minute job actually does this — not just the function on its own', async () => {
+    await goLive();
+    // The owner restocks on eBay: the shop sold out and pushed 0, then 60 went
+    // back on the listing by hand.
+    sql.exec(`UPDATE products SET stock = 0 WHERE id = 1`);
+    sql.exec(`UPDATE channel_listings SET pushed_qty = 0, channel_qty = 60 WHERE external_id = '111'`);
+    await runStockJob(env, new Date('2099-01-01T00:30:00Z'));
+    expect(stockOf(1)).toBe(60);
+  });
+
+  it('does not adopt the same change twice', async () => {
+    sql.exec(`UPDATE products SET stock = 0 WHERE id = 1`);
+    listing({ product: 1, ext: '111', sent: 0, shows: 95 });
+    expect(await adoptChannelCounts(env)).toBe(1);
+    expect(await adoptChannelCounts(env)).toBe(0);
+    expect(stockOf(1)).toBe(95);
   });
 });

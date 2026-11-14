@@ -16,7 +16,7 @@
 
 import type { ChannelListing, EbayAccount, Env } from '../types';
 import { getSetting, setSetting } from './settings';
-import { D1_IN_CHUNK, uniqueSlug } from './util';
+import { D1_IN_CHUNK, uniqueSlug, inChunks } from './util';
 import { adjustStock, centralStockEnabled, setStock, type StockChange } from './stock';
 import { MatchIndex, exactDuplicateGroups, matchListing, type MatchCandidate } from './matching';
 import { getUserAccessToken, sellerConnected } from './ebay/oauth';
@@ -615,6 +615,75 @@ interface DirtyListing {
  * is left alone — pushing blind could overwrite a real count. Zeros go first — an item that has sold out must stop selling before
  * anything else is tidied up.
  */
+/**
+ * Takes a marketplace's own count as the master when it has changed there.
+ *
+ * Centralised stock was one-way: the website's count was pushed out and a
+ * change made on eBay was only ever recorded, never acted on. So restocking on
+ * eBay left the website showing "out of stock" for ever — in production 95
+ * Bisto and 79 Berocca sat unsellable on the site while eBay had them.
+ *
+ * `pushed_qty` is what we last set on the channel, `channel_qty` what the
+ * channel reports now. When they differ, the number was changed at the
+ * channel's end — a restock or an edit by the owner — so that is the newer
+ * truth and becomes the master. When they match, the channel is simply
+ * carrying the figure we gave it and nothing is adopted; that is what stops a
+ * website sale whose push has not landed yet from being undone, which a plain
+ * "the channel always wins" rule would do.
+ *
+ * eBay wins over Amazon, and the larger count wins between two eBay shops,
+ * because the owner keeps eBay by hand and that is the one they correct.
+ *
+ * Products whose stock the owner locked on the website are left alone: that
+ * lock is an explicit instruction not to let a sync touch the number.
+ * Archived products are left alone too — adopting a count would not put them
+ * back on sale, and un-archiving is the owner's decision, not the sync's.
+ */
+export async function adoptChannelCounts(env: Env): Promise<number> {
+  const { results } = await env.DB.prepare(
+    `SELECT l.product_id AS productId, l.id AS listingId, l.channel, l.channel_qty AS qty
+       FROM channel_listings l
+       JOIN products p ON p.id = l.product_id
+      WHERE l.status = 'linked' AND l.fulfilment = 'merchant'
+        AND p.merged_into IS NULL AND p.status != 'archived' AND p.stock_locked = 0
+        AND l.channel_qty IS NOT NULL AND l.pushed_qty IS NOT NULL
+        AND l.channel_qty != l.pushed_qty
+        AND l.channel_qty != p.stock
+      ORDER BY l.product_id, (l.channel = 'ebay') DESC, l.channel_qty DESC`,
+  ).all<{ productId: number; listingId: number; channel: string; qty: number }>();
+
+  // One winner per product: the ORDER BY above puts it first.
+  const winners = new Map<number, { listingId: number; channel: string; qty: number }>();
+  for (const r of results ?? []) {
+    if (!winners.has(r.productId)) winners.set(r.productId, { listingId: r.listingId, channel: r.channel, qty: r.qty });
+  }
+  if (!winners.size) return 0;
+
+  for (const channel of ['ebay', 'amazon'] as const) {
+    const mine = [...winners.entries()].filter(([, w]) => w.channel === channel);
+    if (!mine.length) continue;
+    await setStock(
+      env,
+      mine.map(([productId, w]) => ({ productId, quantity: w.qty })),
+      'correction',
+      `Count taken from ${channel === 'ebay' ? 'eBay' : 'Amazon'}`,
+    );
+  }
+
+  // The listing we believed is now in step, so it is not pushed back to. Every
+  // other listing of that product still differs and is pushed, which is how a
+  // restock entered on eBay reaches Amazon and the website together.
+  for (const slice of inChunks([...winners.values()].map((w) => w.listingId))) {
+    await env.DB.prepare(
+      `UPDATE channel_listings SET pushed_qty = channel_qty, updated_at = datetime('now')
+        WHERE id IN (${slice.map(() => '?').join(',')})`,
+    )
+      .bind(...slice)
+      .run();
+  }
+  return winners.size;
+}
+
 export async function dirtyListings(env: Env, productIds?: number[]): Promise<DirtyListing[]> {
   // More ids than one D1 query can bind: check every listing instead. Only
   // listings that differ come back either way, so the answer is the same.
@@ -1174,6 +1243,8 @@ export interface StockJobSummary {
   revived?: number;
   /** Sales put back by the one-off reconciliation (see reconcileCountedSales). */
   corrected?: number;
+  /** Products whose count was taken from a marketplace the owner changed it on. */
+  adopted?: number;
   merged: number;
   sales: number;
   cancellations: number;
@@ -1270,6 +1341,15 @@ export async function runStockJob(env: Env, now = new Date()): Promise<StockJobS
         summary.errors.push(`Amazon: ${errorText(err)}`);
       }
     }
+    // After the marketplaces' own sales are counted, and before pushing: a
+    // count the owner changed on eBay becomes the master, and the push below
+    // then carries it to the website's other listings.
+    try {
+      summary.adopted = await adoptChannelCounts(env);
+    } catch (err) {
+      summary.errors.push(`Channel counts: ${errorText(err)}`);
+    }
+
     try {
       const p = await pushDirty(env, budget);
       summary.pushed = p.pushed;

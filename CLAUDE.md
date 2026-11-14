@@ -57,6 +57,15 @@ npm run db:seed:local      # categories, settings, QR10 coupon
 - `products.stock` is what the website sells from; `products.ebay_stock` is what
   the last sync saw on eBay and is recorded even when `stock_locked` is set, so
   Admin → Stock can show the two side by side.
+- **Centralised stock runs both ways.** The master count is pushed out, and a
+  count the owner changes at the marketplace is pulled back in by
+  `adoptChannelCounts` in `channels.ts`: eBay is where they restock by hand, so
+  that number wins. The test is `channel_qty != pushed_qty` — the channel's
+  figure differs from the one we last set there, so it was changed at their
+  end. Never adopt on `channel_qty != products.stock` alone: a website sale
+  whose push has not landed yet looks exactly like that, and adopting would put
+  the sold unit back and oversell it. `stock_locked` and archived products are
+  left alone.
 - **Coupon codes are stored canonical** — uppercase letters and digits only.
   `normaliseCouponCode` strips punctuation before every lookup, so a stored code
   containing a dash can never be found again. Use `formatCouponCode` to render.
