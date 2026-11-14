@@ -132,6 +132,7 @@ beforeEach(() => {
   // The rules production already had, then the ones this change adds.
   sql.exec(PRODUCTION_RULES);
   sql.exec(readFileSync(join(__dirname, '..', 'migrations', '0019_filing_rules.sql'), 'utf8'));
+  sql.exec(readFileSync(join(__dirname, '..', 'migrations', '0021_more_filing_rules.sql'), 'utf8'));
 });
 
 describe('filing rules: the 29 that had no category', () => {
@@ -177,5 +178,27 @@ describe('filing rules: what they must not break', () => {
     const before = sql.all(`SELECT COUNT(*) AS n FROM ebay_category_map`);
     sql.exec(readFileSync(join(__dirname, '..', 'migrations', '0019_filing_rules.sql'), 'utf8'));
     expect(sql.all(`SELECT COUNT(*) AS n FROM ebay_category_map`)).toEqual(before);
+  });
+});
+
+describe('filing rules: the products the archive restore brought back', () => {
+  const cases: Array<[string, keyof typeof ids]> = [
+    ['Maybelline Fit Me Matte & Poreless Powder 90 Translucent', 'make-up'],
+    ['Max Factor Facefinity Pro Blur Longwear Setting Powder, 001 Translucent', 'make-up'],
+    ['Vitabiotics Wellwoman Max. To Help Maintain Health', 'health-wellbeing'],
+    // The trap: 'vitamin' would file a face cream as a supplement.
+    ['Olay Vitamin C Brighten & Glow SPF50+ 3in1 Moisturiser', 'personal-care'],
+  ];
+
+  it.each(cases)('files "%s"', async (title, slug) => {
+    const rules = await loadCategoryRules(env);
+    expect(mapCategory({ title }, rules, null)).toBe(ids[slug]);
+  });
+
+  it('still keeps the earlier rules working', async () => {
+    const rules = await loadCategoryRules(env);
+    expect(mapCategory({ title: "L'Oreal Hyaluron Tint Lip Stain Serum 485 Nude Espresso 5ml" }, rules, null)).toBe(ids['make-up']);
+    expect(mapCategory({ title: 'Seven Seas Omega-3 Fish Oil High Strength' }, rules, null)).toBe(ids['health-wellbeing']);
+    expect(mapCategory({ title: 'Vitamin C Serum 30ml Brightening Face Serum' }, rules, null)).toBe(ids['personal-care']);
   });
 });

@@ -31,6 +31,7 @@ import {
   AmazonThrottledError,
   getCatalogDescription,
   getListingDetails,
+  getListingParcel,
   searchListingsPage,
   setMerchantQuantity,
   type CallCounter,
@@ -1045,6 +1046,80 @@ export async function reviveSoldOutListings(env: Env, budget: Budget): Promise<{
  * bands, photo, description and a category from the sync's keyword rules.
  * Anything the owner already set is kept. Each listing is read once.
  */
+/**
+ * Fills a product's parcel size and weight from its Amazon listing.
+ *
+ * Parcel2Go quotes from products.weight_g and the three dimensions; all of
+ * them were empty, so every quote used the default box no matter what was in
+ * it. Amazon holds the package dimensions for anything listed there, so they
+ * are copied over once per product.
+ *
+ * Only ever fills a blank. A figure the owner typed, or one already taken, is
+ * never overwritten — a shipping number is something they may have corrected
+ * precisely because Amazon's was wrong.
+ *
+ * `dimensions_checked_at` is stamped whether or not anything came back, so a
+ * product Amazon knows nothing about is not re-fetched every five minutes.
+ * Products with no Amazon listing are not reached by this at all.
+ *
+ * FBA listings count here, unlike everywhere else. Their quantity is Amazon's
+ * business and is always excluded, but the box is the same box, and the
+ * product can still be sold on the website and posted by hand.
+ */
+export async function fillAmazonDimensions(
+  env: Env,
+  budget: Budget,
+  max = 10,
+): Promise<{ read: number; filled: number; errors: string[] }> {
+  const { results } = await env.DB.prepare(
+    `SELECT p.id, l.external_id AS sku
+       FROM products p
+       JOIN channel_listings l ON l.product_id = p.id AND l.channel = 'amazon' AND l.status = 'linked'
+      WHERE p.merged_into IS NULL AND p.status != 'archived'
+        AND p.dimensions_checked_at IS NULL
+        AND (p.weight_g IS NULL OR p.length_cm IS NULL OR p.width_cm IS NULL OR p.height_cm IS NULL)
+      GROUP BY p.id
+      ORDER BY p.id
+      LIMIT ?`,
+  )
+    .bind(max)
+    .all<{ id: number; sku: string }>();
+  const rows = results ?? [];
+  if (!rows.length) return { read: 0, filled: 0, errors: [] };
+
+  const counter: CallCounter = { calls: 0 };
+  const statements: D1PreparedStatement[] = [];
+  const errors: string[] = [];
+  let read = 0;
+  let filled = 0;
+  for (const r of rows) {
+    if (!budget.take()) break;
+    let parcel;
+    try {
+      parcel = await getListingParcel(env, counter, r.sku);
+    } catch (err) {
+      if (err instanceof AmazonThrottledError) break; // the rest on a later run
+      errors.push(`Amazon ${r.sku}: ${errorText(err)}`);
+      continue; // not stamped, so it is tried again rather than written off
+    }
+    read++;
+    if (parcel.weightG !== null || parcel.lengthCm !== null || parcel.widthCm !== null || parcel.heightCm !== null) filled++;
+    statements.push(
+      env.DB.prepare(
+        `UPDATE products
+            SET weight_g  = COALESCE(weight_g, ?),
+                length_cm = COALESCE(length_cm, ?),
+                width_cm  = COALESCE(width_cm, ?),
+                height_cm = COALESCE(height_cm, ?),
+                dimensions_checked_at = datetime('now')
+          WHERE id = ?`,
+      ).bind(parcel.weightG, parcel.lengthCm, parcel.widthCm, parcel.heightCm, r.id),
+    );
+  }
+  for (let i = 0; i < statements.length; i += 50) await env.DB.batch(statements.slice(i, i + 50));
+  return { read, filled, errors };
+}
+
 export async function fillAmazonDetails(env: Env, budget: Budget, max = 20): Promise<{ read: number; filled: number; errors: string[] }> {
   const { results } = await env.DB.prepare(
     `SELECT l.id, l.external_id, l.title, l.product_id, p.status AS product_status
@@ -1245,6 +1320,8 @@ export interface StockJobSummary {
   corrected?: number;
   /** Products whose count was taken from a marketplace the owner changed it on. */
   adopted?: number;
+  /** Products given a parcel size and weight from their Amazon listing. */
+  sized?: number;
   merged: number;
   sales: number;
   cancellations: number;
@@ -1369,6 +1446,19 @@ export async function runStockJob(env: Env, now = new Date()): Promise<StockJobS
       summary.errors.push(`eBay draft details: ${errorText(err)}`);
     }
   }
+  // Parcel sizes, a few per run: it is one Amazon request per product and
+  // nothing waits on it, so it fills in over a few hours rather than
+  // crowding out stock work, which is what the cron is really for.
+  if (amazonConfigured(env) && budget.remaining >= 4) {
+    try {
+      const r = await fillAmazonDimensions(env, budget, Math.min(10, budget.remaining - 3));
+      if (r.filled) summary.sized = (summary.sized ?? 0) + r.filled;
+      summary.errors.push(...r.errors.slice(0, 3));
+    } catch (err) {
+      summary.errors.push(`Amazon dimensions: ${errorText(err)}`);
+    }
+  }
+
   if (amazonConfigured(env) && budget.remaining >= 3) {
     try {
       const r = await fillAmazonDetails(env, budget, Math.min(20, budget.remaining - 1));

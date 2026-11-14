@@ -144,12 +144,82 @@ export interface AmazonListingDetails {
   description: string | null;
 }
 
+/** Amazon reports a measurement as a number plus the unit it is in. */
+interface RawMeasure {
+  value?: number | string;
+  unit?: string;
+}
+
 interface RawListingDetails {
   summaries?: { marketplaceId?: string; mainImage?: { link?: string } }[];
   offers?: { marketplaceId?: string; offerType?: string; price?: { amount?: string | number; currency?: string; currencyCode?: string } }[];
   attributes?: {
     product_description?: { value?: string; marketplace_id?: string }[];
     bullet_point?: { value?: string; marketplace_id?: string }[];
+    /** The posted parcel, not the bare item — this is what a courier charges for. */
+    item_package_dimensions?: { length?: RawMeasure; width?: RawMeasure; height?: RawMeasure; marketplace_id?: string }[];
+    item_package_weight?: (RawMeasure & { marketplace_id?: string })[];
+  };
+}
+
+/** What Parcel2Go needs to price a parcel. Null where Amazon does not say. */
+export interface AmazonParcel {
+  weightG: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
+}
+
+// Amazon states the unit per value and sellers enter whatever they like, so
+// every one it accepts is converted rather than assumed to be metric.
+const TO_CM: Record<string, number> = {
+  cm: 1, centimeter: 1, centimeters: 1, centimetre: 1, centimetres: 1,
+  mm: 0.1, millimeter: 0.1, millimeters: 0.1, millimetre: 0.1, millimetres: 0.1,
+  m: 100, meter: 100, meters: 100, metre: 100, metres: 100,
+  in: 2.54, inch: 2.54, inches: 2.54,
+  ft: 30.48, foot: 30.48, feet: 30.48,
+};
+const TO_G: Record<string, number> = {
+  g: 1, gram: 1, grams: 1,
+  kg: 1000, kilogram: 1000, kilograms: 1000,
+  mg: 0.001, milligram: 0.001, milligrams: 0.001,
+  lb: 453.592, lbs: 453.592, pound: 453.592, pounds: 453.592,
+  oz: 28.3495, ounce: 28.3495, ounces: 28.3495,
+};
+
+/**
+ * A measurement converted to cm or grams, or null when it cannot be trusted.
+ *
+ * A wrong number here is worse than none: it would be quoted and paid for. So
+ * anything missing, zero, negative, in an unknown unit, or beyond what a
+ * courier would carry is dropped, and the default parcel covers it instead.
+ */
+function measure(raw: RawMeasure | undefined, table: Record<string, number>, max: number): number | null {
+  if (!raw) return null;
+  const n = typeof raw.value === 'string' ? Number(raw.value) : raw.value;
+  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return null;
+  const factor = table[String(raw.unit ?? '').trim().toLowerCase()];
+  if (!factor) return null;
+  const out = n * factor;
+  return out > 0 && out <= max ? out : null;
+}
+
+/** Package size and weight from one listing's attributes. Pure, for testing. */
+export function mapParcel(raw: RawListingDetails): AmazonParcel {
+  const forUk = <T extends { marketplace_id?: string }>(list: T[] | undefined) =>
+    (list ?? []).find((x) => !x.marketplace_id || x.marketplace_id === UK_MARKETPLACE);
+  const d = forUk(raw.attributes?.item_package_dimensions);
+  const w = forUk(raw.attributes?.item_package_weight);
+  const cm = (m: RawMeasure | undefined) => {
+    const v = measure(m, TO_CM, 300);
+    return v === null ? null : Math.round(v * 10) / 10;
+  };
+  const grams = measure(w, TO_G, 100_000);
+  return {
+    weightG: grams === null ? null : Math.round(grams),
+    lengthCm: cm(d?.length),
+    widthCm: cm(d?.width),
+    heightCm: cm(d?.height),
   };
 }
 
@@ -171,6 +241,22 @@ export function mapListingDetails(raw: RawListingDetails): AmazonListingDetails 
     .map((b) => `• ${b}`);
   const description = [text, bullets.join('\n')].filter(Boolean).join('\n\n') || null;
   return { pricePence, imageUrl, description };
+}
+
+/**
+ * Package size and weight for one SKU (one request).
+ *
+ * The same endpoint getListingDetails uses: `attributes` already carries the
+ * dimensions, so nothing extra is asked of Amazon's rate limit.
+ */
+export async function getListingParcel(env: Env, counter: CallCounter, sku: string): Promise<AmazonParcel> {
+  const params = new URLSearchParams({ marketplaceIds: UK_MARKETPLACE, includedData: 'attributes' });
+  const raw = await sp<RawListingDetails>(
+    env,
+    counter,
+    `/listings/2021-08-01/items/${encodeURIComponent(env.AMAZON_SELLER_ID as string)}/${encodeURIComponent(sku)}?${params.toString()}`,
+  );
+  return mapParcel(raw);
 }
 
 /** One listing's price, main photo and description (one request). */

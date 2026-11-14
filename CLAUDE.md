@@ -85,6 +85,13 @@ npm run db:seed:local      # categories, settings, QR10 coupon
   least recently confirmed first. A run that does ~20 sequential API calls takes
   ~20s and gets killed mid-flight, which is what left 1,471 runs stuck at
   'running'. Keep cron work short and resumable.
+- **Parcel2Go prices a parcel from `products.weight_g` and the three
+  `*_cm` columns**, falling back to the default box in settings when they are
+  empty. `fillAmazonDimensions` in `channels.ts` copies them from a product's
+  Amazon listing, a few per run, and only ever fills a blank — a figure the
+  owner typed is never overwritten. `dimensions_checked_at` stops a product
+  Amazon knows nothing about being asked about again. FBA listings count here
+  (the box is the same box) even though their quantity never does.
 - **R2 has no spending cap, so the app is the cap.** Every write goes through
   `canStore()` in `src/lib/media.ts`, replaced and deleted images are reclaimed,
   and `/media/*` is edge-cached so reads rarely reach R2. Never add an R2 write
@@ -125,7 +132,7 @@ src/lib/ebay/orders.ts   Fulfillment API orders → sale lines
 src/lib/amazon/spapi.ts  Amazon SP-API: listings, MFN orders, FBM quantity
 src/routes/admin/channels.tsx  Sales channels (connect, go-live) + Review matches
 src/routes/admin/stock.tsx  the Stock screen: website vs eBay quantity per channel
-migrations/              D1 schema, 0001–0019. Two files share each of the numbers 0003 and 0004
+migrations/              D1 schema, 0001–0021. Two files share each of the numbers 0003 and 0004
                          (parallel branches); production has applied all of them under these
                          exact names, so never rename a migration file.
 db/                      seed.sql (reference data), ebay-catalogue.sql (the 90

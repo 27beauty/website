@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildReviseInventoryStatus, parseActiveList, parseItemDetails, parseItemStatus, parseReviseResponse, tagText } from '../src/lib/ebay/trading';
 import { saleLines } from '../src/lib/ebay/orders';
-import { classifyOrders, mapCatalogDescription, mapListing, mapListingDetails } from '../src/lib/amazon/spapi';
+import { classifyOrders, mapCatalogDescription, mapListing, mapListingDetails, mapParcel } from '../src/lib/amazon/spapi';
 import { planEbayBatches } from '../src/lib/channels';
 import { decryptSecret, encryptSecret } from '../src/lib/crypto';
 
@@ -229,5 +229,68 @@ describe('Amazon catalogue description', () => {
       }),
     ).toBe('Sugar-free lozenges.\n\n• Triple action');
     expect(mapCatalogDescription({})).toBeNull();
+  });
+});
+
+describe('parcel size and weight from an Amazon listing', () => {
+  const attrs = (a: Record<string, unknown>) => ({ attributes: a }) as never;
+  const UK = 'A1F83G8C2ARO7P';
+
+  it('reads a metric parcel straight through', () => {
+    expect(
+      mapParcel(
+        attrs({
+          item_package_dimensions: [
+            { length: { value: 25, unit: 'centimeters' }, width: { value: 18, unit: 'centimeters' }, height: { value: 6.5, unit: 'centimeters' }, marketplace_id: UK },
+          ],
+          item_package_weight: [{ value: 0.75, unit: 'kilograms', marketplace_id: UK }],
+        }),
+      ),
+    ).toEqual({ weightG: 750, lengthCm: 25, widthCm: 18, heightCm: 6.5 });
+  });
+
+  it('converts inches and pounds, because sellers enter either', () => {
+    expect(
+      mapParcel(
+        attrs({
+          item_package_dimensions: [{ length: { value: 10, unit: 'inches' }, width: { value: 4, unit: 'inches' }, height: { value: 2, unit: 'inches' } }],
+          item_package_weight: [{ value: 1.5, unit: 'pounds' }],
+        }),
+      ),
+    ).toEqual({ weightG: 680, lengthCm: 25.4, widthCm: 10.2, heightCm: 5.1 });
+  });
+
+  it('takes a value Amazon sent as a string', () => {
+    expect(mapParcel(attrs({ item_package_weight: [{ value: '500', unit: 'grams' }] })).weightG).toBe(500);
+  });
+
+  it('drops a unit it does not recognise rather than guessing', () => {
+    // Guessing would be quoted and paid for, so an unknown unit is no answer.
+    expect(mapParcel(attrs({ item_package_weight: [{ value: 2, unit: 'stones' }] })).weightG).toBeNull();
+  });
+
+  it('drops zero, negative and nonsense measurements', () => {
+    const r = mapParcel(
+      attrs({
+        item_package_dimensions: [{ length: { value: 0, unit: 'cm' }, width: { value: -5, unit: 'cm' }, height: { value: 9999, unit: 'cm' } }],
+        item_package_weight: [{ value: 500, unit: 'kilograms' }],
+      }),
+    );
+    expect(r).toEqual({ weightG: null, lengthCm: null, widthCm: null, heightCm: null });
+  });
+
+  it('ignores another marketplace’s figures', () => {
+    expect(mapParcel(attrs({ item_package_weight: [{ value: 9, unit: 'kg', marketplace_id: 'ATVPDKIKX0DER' }] })).weightG).toBeNull();
+  });
+
+  it('gives all nulls when Amazon says nothing, so the default parcel is used', () => {
+    expect(mapParcel({} as never)).toEqual({ weightG: null, lengthCm: null, widthCm: null, heightCm: null });
+    expect(mapParcel(attrs({}))).toEqual({ weightG: null, lengthCm: null, widthCm: null, heightCm: null });
+  });
+
+  it('keeps a partial answer — a weight with no size still beats a guess', () => {
+    expect(mapParcel(attrs({ item_package_weight: [{ value: 320, unit: 'g' }] }))).toEqual({
+      weightG: 320, lengthCm: null, widthCm: null, heightCm: null,
+    });
   });
 });

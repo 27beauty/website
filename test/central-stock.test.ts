@@ -11,6 +11,7 @@ import { adjustStock, setStock } from '../src/lib/stock';
 import {
   adoptChannelCounts,
   Budget,
+  fillAmazonDimensions,
   dirtyListings,
   enableCentralStock,
   ensureEbayListingRows,
@@ -629,5 +630,80 @@ describe('a count the owner changed on the marketplace', () => {
     expect(await adoptChannelCounts(env)).toBe(1);
     expect(await adoptChannelCounts(env)).toBe(0);
     expect(stockOf(1)).toBe(95);
+  });
+});
+
+describe('parcel size and weight for Parcel2Go', () => {
+  const sizeOf = (id: number) =>
+    sql.all('SELECT weight_g, length_cm, width_cm, height_cm, dimensions_checked_at IS NOT NULL AS checked FROM products WHERE id = ?', id)[0];
+  const amazonSays = (sku: string, dims: Record<string, unknown>) => {
+    world.amazonDetails = { ...(world.amazonDetails ?? {}), [sku]: { attributes: dims } };
+  };
+
+  it('takes the parcel from the Amazon listing when the product has none', async () => {
+    await goLive();
+    amazonSays('AMZ-TSU', {
+      item_package_dimensions: [{ length: { value: 22, unit: 'centimeters' }, width: { value: 9, unit: 'centimeters' }, height: { value: 7, unit: 'centimeters' } }],
+      item_package_weight: [{ value: 480, unit: 'grams' }],
+    });
+    const r = await fillAmazonDimensions(env, new Budget(20));
+    expect(r.filled).toBeGreaterThan(0);
+    expect(sizeOf(3)).toEqual({ weight_g: 480, length_cm: 22, width_cm: 9, height_cm: 7, checked: 1 });
+  });
+
+  it('never overwrites a figure the owner set themselves', async () => {
+    await goLive();
+    // The owner weighed it: Amazon's number must not replace theirs.
+    sql.exec(`UPDATE products SET weight_g = 1200 WHERE id = 3`);
+    amazonSays('AMZ-TSU', {
+      item_package_dimensions: [{ length: { value: 22, unit: 'cm' }, width: { value: 9, unit: 'cm' }, height: { value: 7, unit: 'cm' } }],
+      item_package_weight: [{ value: 480, unit: 'grams' }],
+    });
+    await fillAmazonDimensions(env, new Budget(20));
+    const got = sizeOf(3) as { weight_g: number; length_cm: number };
+    expect(got.weight_g).toBe(1200);
+    // ...while still filling the parts that were blank.
+    expect(got.length_cm).toBe(22);
+  });
+
+  it('marks a product Amazon knows nothing about, so it is not asked again', async () => {
+    await goLive();
+    amazonSays('AMZ-TSU', {});
+    const first = await fillAmazonDimensions(env, new Budget(20));
+    expect(first.read).toBeGreaterThan(0);
+    expect(first.filled).toBe(0);
+    expect((sizeOf(3) as { checked: number }).checked).toBe(1);
+    // Nothing left to ask about: a second run reads nothing at all.
+    expect((await fillAmazonDimensions(env, new Budget(20))).read).toBe(0);
+  });
+
+  it('spends no Amazon requests once every product has been checked', async () => {
+    await goLive();
+    amazonSays('AMZ-TSU', { item_package_weight: [{ value: 100, unit: 'g' }] });
+    await fillAmazonDimensions(env, new Budget(20));
+    const budget = new Budget(20);
+    await fillAmazonDimensions(env, budget);
+    expect(budget.remaining).toBe(20);
+  });
+
+  it('leaves a product with no Amazon listing alone — Amazon cannot say anything about it', async () => {
+    await goLive();
+    sql.exec(`INSERT INTO products (id, slug, title, price_pence, stock, source) VALUES (90, 'web-only', 'Website Only Thing', 500, 3, 'manual')`);
+    await fillAmazonDimensions(env, new Budget(20));
+    expect(sizeOf(90)).toEqual({ weight_g: null, length_cm: null, width_cm: null, height_cm: null, checked: 0 });
+  });
+
+  it('still takes the parcel from an FBA listing, unlike the stock count', async () => {
+    // FBA is excluded everywhere else, because Amazon ships those and the
+    // quantity is not ours to manage. The box is the same box, though, and the
+    // product can still be sold on the website and posted by hand.
+    await goLive();
+    const fba = sql.all(`SELECT product_id FROM channel_listings WHERE external_id = 'AMZ-FBA' AND product_id IS NOT NULL`) as {
+      product_id: number;
+    }[];
+    expect(fba.length).toBe(1);
+    amazonSays('AMZ-FBA', { item_package_weight: [{ value: 1.2, unit: 'kg' }] });
+    await fillAmazonDimensions(env, new Budget(20));
+    expect((sizeOf(fba[0].product_id) as { weight_g: number }).weight_g).toBe(1200);
   });
 });
