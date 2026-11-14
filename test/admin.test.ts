@@ -12,7 +12,15 @@ import {
   renderQrSvg,
 } from '../src/lib/qr';
 import { normaliseCouponCode } from '../src/lib/util';
-import { missingForSale, parseCsv, parseProductCsvRows, productsToCsv, toCsvRow } from '../src/routes/admin/products';
+import {
+  listingLabel,
+  listingManageUrl,
+  missingForSale,
+  parseCsv,
+  parseProductCsvRows,
+  productsToCsv,
+  toCsvRow,
+} from '../src/routes/admin/products';
 import { productIdFromChoice } from '../src/routes/admin/channels';
 import { asNumber } from '../src/routes/admin/settings';
 import { hashPasswordPbkdf2 } from '../scripts/hash-password.mjs';
@@ -249,5 +257,41 @@ describe('admin guidance helpers', () => {
   it('lists what a draft still needs before it can go on sale', () => {
     expect(missingForSale({ price_pence: 0, image_url: null, category_id: null })).toEqual(['a price', 'a photo', 'a category']);
     expect(missingForSale({ price_pence: 499, image_url: '/media/x.jpg', category_id: 3 })).toEqual([]);
+  });
+});
+
+describe('where to go to remove a listing from the marketplace', () => {
+  const listing = (over: Record<string, unknown>) =>
+    ({ channel: 'ebay', account: 'aisha-4515', external_id: '1234', sku: null, asin: null, ...over }) as never;
+
+  it('links an eBay item to its own page', () => {
+    expect(listingManageUrl(listing({}))).toBe('https://www.ebay.co.uk/itm/1234');
+  });
+
+  it('sends an Amazon SKU to Seller Central, not the shopper-facing page', () => {
+    // /dp/ is where buyers go; you cannot end a listing from it. The owner is
+    // on this screen precisely to take the listing down.
+    expect(listingManageUrl(listing({ channel: 'amazon', sku: 'ABC/123', asin: 'B00TEST' }))).toBe(
+      'https://sellercentral.amazon.co.uk/skucentral?mSku=ABC%2F123',
+    );
+  });
+
+  it('falls back to the Amazon product page when only an ASIN is known', () => {
+    expect(listingManageUrl(listing({ channel: 'amazon', external_id: '', sku: null, asin: 'B00TEST' }))).toBe(
+      'https://www.amazon.co.uk/dp/B00TEST',
+    );
+  });
+
+  it('gives no link when there is nothing to link to', () => {
+    expect(listingManageUrl(listing({ channel: 'amazon', external_id: '', sku: null, asin: null }))).toBeNull();
+  });
+
+  it('escapes an item number rather than pasting it into the URL raw', () => {
+    expect(listingManageUrl(listing({ external_id: 'a b&c' }))).toBe('https://www.ebay.co.uk/itm/a%20b%26c');
+  });
+
+  it('names each listing the way the owner would recognise it', () => {
+    expect(listingLabel(listing({}))).toBe('eBay aisha-4515 #1234');
+    expect(listingLabel(listing({ channel: 'amazon', sku: 'SKU-9' }))).toBe('Amazon SKU-9');
   });
 });

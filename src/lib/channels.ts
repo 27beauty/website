@@ -1429,13 +1429,20 @@ export async function suggestionsFor(env: Env, listing: ChannelListing): Promise
  * Call this BEFORE deleting the product: it reads the product's own eBay
  * identity to cover the case where no listing row was ever created for it.
  */
-export async function blockProductListings(env: Env, productId: number): Promise<void> {
+export async function blockProductListings(env: Env, productId: number): Promise<number[]> {
   const p = await env.DB.prepare(
     `SELECT id, title, ebay_item_id, ebay_account FROM products WHERE id = ?`,
   )
     .bind(productId)
     .first<{ id: number; title: string; ebay_item_id: string | null; ebay_account: string | null }>();
-  if (!p) return;
+  if (!p) return [];
+
+  // Collected before the delete nulls product_id, so the screen that follows
+  // can link the owner straight to the listings still live on the channels.
+  const existing = await env.DB.prepare(`SELECT id FROM channel_listings WHERE product_id = ? ORDER BY id`)
+    .bind(productId)
+    .all<{ id: number }>();
+  const ids = (existing.results ?? []).map((r) => r.id);
 
   const statements: D1PreparedStatement[] = [
     env.DB.prepare(
@@ -1448,8 +1455,8 @@ export async function blockProductListings(env: Env, productId: number): Promise
   // An eBay product whose listing row was never created still needs a block,
   // or the next sync simply imports it again from the feed. channel_listings
   // keys eBay items by their bare item number, not the 'v1|...|0' form.
-  if (p.ebay_item_id && p.ebay_account) {
-    const bare = /^v1\|([^|]+)\|/.exec(p.ebay_item_id)?.[1] ?? p.ebay_item_id;
+  const bare = p.ebay_item_id ? (/^v1\|([^|]+)\|/.exec(p.ebay_item_id)?.[1] ?? p.ebay_item_id) : null;
+  if (bare && p.ebay_account) {
     statements.push(
       env.DB.prepare(
         `INSERT INTO channel_listings (channel, account, external_id, title, status)
@@ -1460,6 +1467,17 @@ export async function blockProductListings(env: Env, productId: number): Promise
     );
   }
   await env.DB.batch(statements);
+
+  // The row above may have just been created, so its id is read afterwards.
+  if (bare && p.ebay_account) {
+    const row = await env.DB.prepare(
+      `SELECT id FROM channel_listings WHERE channel = 'ebay' AND account = ? AND external_id = ?`,
+    )
+      .bind(p.ebay_account, bare)
+      .first<{ id: number }>();
+    if (row && !ids.includes(row.id)) ids.push(row.id);
+  }
+  return ids;
 }
 
 export async function resolveListing(

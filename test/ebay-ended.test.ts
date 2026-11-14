@@ -105,6 +105,23 @@ describe('a product the owner deleted', () => {
     expect(products()).toHaveLength(1);
   });
 
+  it('hands back the listings still live on the channel, so they can be linked', async () => {
+    await importOne('v1|600|0', 'Something With A Listing');
+    const id = products()[0].id;
+    const blocked = await blockProductListings(env, id);
+    // The delete screen uses these ids to show the owner where the product is
+    // still on sale; an empty list would silently drop that step.
+    expect(blocked).toHaveLength(1);
+    expect(sql.all(`SELECT external_id, status FROM channel_listings WHERE id = ${blocked[0]}`)).toEqual([
+      { external_id: '600', status: 'blocked' },
+    ]);
+  });
+
+  it('hands back nothing for a product that was only ever on the website', async () => {
+    sql.exec(`INSERT INTO products (id, slug, title, price_pence, stock) VALUES (900, 'web-only', 'Web Only', 500, 1)`);
+    expect(await blockProductListings(env, 900)).toEqual([]);
+  });
+
   it('still imports everything else', async () => {
     await importAndDelete(true);
     live = [

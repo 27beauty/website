@@ -147,6 +147,26 @@ function ProductSkus(props: { product: ProductWithCategory; listings: ChannelLis
   );
 }
 
+/**
+ * Where the owner goes to manage this listing on the channel itself.
+ *
+ * eBay's item page is the same URL buyers see; signed in as the seller it
+ * carries the selling controls. Amazon's /dp/ page is buyer-facing and no use
+ * for removing a listing, so an Amazon SKU points at Seller Central instead,
+ * falling back to the public page when all we know is an ASIN.
+ */
+export function listingManageUrl(l: Pick<ChannelListing, 'channel' | 'external_id' | 'sku' | 'asin'>): string | null {
+  if (l.channel === 'ebay') return `https://www.ebay.co.uk/itm/${encodeURIComponent(l.external_id)}`;
+  const sku = l.sku ?? l.external_id;
+  if (sku) return `https://sellercentral.amazon.co.uk/skucentral?mSku=${encodeURIComponent(sku)}`;
+  return l.asin ? `https://www.amazon.co.uk/dp/${encodeURIComponent(l.asin)}` : null;
+}
+
+/** "eBay aisha-4515 #1234" / "Amazon ABC-123" — how a listing is named to the owner. */
+export function listingLabel(l: Pick<ChannelListing, 'channel' | 'account' | 'external_id' | 'sku'>): string {
+  return l.channel === 'ebay' ? `eBay ${l.account} #${l.external_id}` : `Amazon ${l.sku ?? l.external_id}`;
+}
+
 /** Every place the product is sold, one badge each: channel, shop/SKU, what it shows, and a link. */
 function ListedOn(props: { product: ProductWithCategory; listings: ChannelListing[] }) {
   const { product, listings } = props;
@@ -1130,6 +1150,81 @@ products.get('/export.csv', async (c) => {
   });
 });
 
+/**
+ * Shown straight after deleting a product that was also on eBay or Amazon.
+ *
+ * Deleting only removes it from this website; the marketplace listings are
+ * untouched and still taking orders. This is the one moment the owner has the
+ * context to go and end them, so each one is linked directly rather than
+ * leaving them to hunt for it in Seller Central or My eBay.
+ */
+products.get('/deleted', async (c) => {
+  const admin = getAdmin(c);
+  const back = c.req.query('back') || '/admin/products';
+  const title = c.req.query('title') ?? 'That product';
+  const msg = c.req.query('msg') ?? 'Product deleted.';
+  const ids = (c.req.query('ids') ?? '')
+    .split(',')
+    .map((n) => Number(n))
+    .filter((n) => Number.isInteger(n) && n > 0)
+    .slice(0, 20);
+
+  const listings = ids.length
+    ? ((
+        await c.env.DB.prepare(
+          `SELECT id, channel, account, external_id, sku, asin, title FROM channel_listings
+            WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY channel, account`,
+        )
+          .bind(...ids)
+          .all<ChannelListing>()
+      ).results ?? [])
+    : [];
+
+  return c.html(
+    <AdminLayout title="Product deleted" active="products" admin={admin}>
+      <div class="admin-panel" style="max-width:560px;">
+        <h1>Deleted "{title}"</h1>
+        <p class="muted">{msg} It is off the website now.</p>
+        {listings.length ? (
+          <>
+            <p>
+              <strong>Still on sale elsewhere.</strong> Deleting here does not touch the marketplace, so{' '}
+              {listings.length === 1 ? 'this listing is' : 'these listings are'} still live and can still take
+              orders. Open {listings.length === 1 ? 'it' : 'each one'} to end it there too.
+            </p>
+            <ul class="deleted-listings">
+              {listings.map((l) => {
+                const href = listingManageUrl(l);
+                return (
+                  <li>
+                    <span class="deleted-listing-name">{listingLabel(l)}</span>
+                    {href ? (
+                      <a class="btn btn-sm btn-secondary" href={href} target="_blank" rel="noreferrer">
+                        {l.channel === 'ebay' ? 'Open on eBay' : 'Open in Seller Central'} ↗
+                      </a>
+                    ) : (
+                      <span class="faint small">No link — find it by SKU in Seller Central</span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            <p class="muted small">
+              Leaving them up is fine too: they will keep selling on the marketplace, and the sync will not put
+              the product back on the website.
+            </p>
+          </>
+        ) : null}
+        <div class="row">
+          <a class="btn" href={back}>
+            Done
+          </a>
+        </div>
+      </div>
+    </AdminLayout>,
+  );
+});
+
 products.get('/:id', async (c) => {
   const admin = getAdmin(c);
   const id = Number(c.req.param('id'));
@@ -1532,8 +1627,8 @@ products.get('/:id/delete', async (c) => {
         </p>
         <p class="muted">
           Its eBay and Amazon listings are left alone and stay on sale there — but they are marked so the sync
-          will not put this product back on the website. Delete the listing on eBay or Amazon too if you want it
-          off those as well.
+          will not put this product back on the website. Once it is deleted you will get a link to each listing,
+          so you can remove it from those too.
         </p>
         <div class="row">
           <form method="post" action={`/admin/products/${id}/delete`}>
@@ -1559,24 +1654,30 @@ products.post('/:id/delete', async (c) => {
   if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
     return c.redirect(redirectWith(back, { err: 'Your session expired — please try again.' }), 303);
   }
+  // Read before anything is removed: the screen that follows names the product.
+  const product = await getProductById(c.env, id);
+  if (!product) return c.redirect(redirectWith(back, { err: 'That product no longer exists.' }), 303);
   // Before the row goes: mark its marketplace listings so the eBay sync does
   // not simply import the product again on its next run (ten minutes later),
   // which would make the delete look like it had not worked.
-  await blockProductListings(c.env, id);
+  const blocked = await blockProductListings(c.env, id);
   // Reclaim the product's stored photos too, or deleted products would keep
   // paying rent in R2 forever.
   const removed = await deleteProductImages(c.env, id);
   await c.env.DB.prepare('DELETE FROM products WHERE id = ?').bind(id).run();
-  // Back to wherever Delete was pressed — the Stock screen, say — rather than
-  // always to the product list.
-  return c.redirect(
-    redirectWith(back, {
-      msg: removed
-        ? `Product deleted, along with ${removed} stored image${removed === 1 ? '' : 's'}.`
-        : 'Product deleted.',
-    }),
-    303,
-  );
+  const msg = removed
+    ? `Product deleted, along with ${removed} stored image${removed === 1 ? '' : 's'}.`
+    : 'Product deleted.';
+  // When it was also on eBay or Amazon, the job is only half done: those
+  // listings are still on sale. Show them, with a link to each, instead of
+  // dropping the owner back on a list where the product has simply vanished.
+  if (blocked.length) {
+    const q = new URLSearchParams({ ids: blocked.join(','), title: product.title, back, msg });
+    return c.redirect(`/admin/products/deleted?${q.toString()}`, 303);
+  }
+  // Website-only: back to wherever Delete was pressed, rather than always to
+  // the product list.
+  return c.redirect(redirectWith(back, { msg }), 303);
 });
 
 const IMAGE_EXT: Record<string, string> = {
