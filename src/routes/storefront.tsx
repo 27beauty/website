@@ -11,6 +11,7 @@ import {
   relatedProducts,
   BEAUTY_CATEGORY_SLUG,
   BEAUTY_CATEGORY_SLUGS,
+  RETIRED_CATEGORY_SLUGS,
 } from '../lib/db';
 import {
   addLine,
@@ -367,7 +368,14 @@ storefront.get('/category/beauty', async (c) => {
 storefront.get('/category/:slug', async (c) => {
   const slug = c.req.param('slug');
   const category = await getCategoryBySlug(c.env, slug);
-  if (!category) return c.notFound();
+  if (!category) {
+    // A category the seven-category restructure retired: send the visitor to
+    // where its products went rather than showing them a 404. Printed QR cards
+    // cannot be reissued, so these redirects are permanent.
+    const movedTo = RETIRED_CATEGORY_SLUGS[slug];
+    if (movedTo) return c.redirect(`/category/${movedTo}`, 301);
+    return c.notFound();
+  }
 
   const intro = (
     <div class="field">

@@ -1,17 +1,13 @@
 -- Reference data for 27beauty. Safe to run more than once.
 
 INSERT INTO categories (slug, name, description, emoji, sort_order) VALUES
-  ('hair-beauty',        'Hair, Beauty & Grooming',  'Hair care, skincare, grooming and cosmetics.',          '💄', 10),
-  ('pet-food-treats',    'Pet Food & Treats',        'Dog and cat food, snacks and chews.',                  '🐾', 20),
-  ('toys-games',         'Toys & Games',             'Toys, board games and puzzles for all ages.',          '🎲', 30),
-  ('coffee-tea',         'Coffee & Tea',             'Ground coffee, pods, tea bags and infusions.',          '☕', 40),
-  ('snacks-sweets',      'Crisps, Chocolate & Sweets','Crisps, chocolate, sweets and sharing bags.',          '🍫', 50),
-  ('diy-tools',          'DIY & Tools',              'Tools, fixings, decorating and hardware.',             '🔧', 60),
-  ('breakfast-bars',     'Breakfast & Cereal Bars',  'Cereals, porridge, breakfast and cereal bars.',         '🥣', 70),
-  ('household-appliances','Household Appliances',    'Small appliances and household essentials.',            '🔌', 80),
-  ('home-living',        'Home & Living',            'Bedding, candles, air care and everyday home bits.',    '🕯️', 85),
-  ('garden',             'Garden',                   'Garden tools, growing, outdoor living.',               '🪴', 90),
-  ('electronics',        'Electronics & Tech',       'Computing, printing and gadget essentials.',            '💻', 95)
+  ('make-up',          'Make up',             'Lipstick, mascara, foundation, brows and nails.',            '💄', 10),
+  ('personal-care',    'Personal care',       'Hair care, skincare, body wash and everyday grooming.',      '🧴', 20),
+  ('health-wellbeing', 'Health & Wellbeing',  'Vitamins, first aid, pregnancy tests and everyday care.',    '🩺', 30),
+  ('food-drink',       'Food & Drink',        'Coffee and tea, snacks, cereal bars and catering sachets.',  '☕', 40),
+  ('home',             'Home',                'Appliances, kitchen, garden and office.',                    '🏠', 50),
+  ('toys-games',       'Toys & Games',        'Toys, board games and puzzles.',                             '🎲', 60),
+  ('pet-supplies',     'Pet Supplies',        'Food, treats and everyday bits for cats and dogs.',          '🐾', 70)
 ON CONFLICT(slug) DO UPDATE SET
   name = excluded.name,
   description = excluded.description,

@@ -22,7 +22,7 @@ beforeEach(() => {
   env = { DB: sql.db } as unknown as Env;
   sql.exec(`
     INSERT INTO categories (id, slug, name, sort_order) VALUES
-      (1, 'hair-beauty', 'Beauty & Personal Care', 10),
+      (1, 'make-up', 'Make up', 10),
       (2, 'coffee-tea', 'Coffee & Tea', 20),
       (3, 'snacks-sweets', 'Snacks', 30),
       (4, 'empty', 'Empty', 40);
@@ -73,10 +73,13 @@ describe('deleteCategory', () => {
 
 describe('beauty across several categories', () => {
   it('lists products from any of the beauty categories', async () => {
+    // Beauty spans the two lead categories of the seven: Make up (1 here) and
+    // Personal care. A product outside them must not be swept in.
     sql.exec(`
-      INSERT INTO categories (id, slug, name, sort_order) VALUES (5, 'skin-and-body-care', 'Skin & Body Care', 50), (6, 'makeup-and-fragrance', 'Makeup & Fragrance', 60);
+      INSERT INTO categories (id, slug, name, sort_order) VALUES (5, 'personal-care', 'Personal care', 20);
       INSERT INTO products (id, slug, title, price_pence, stock, category_id) VALUES
-        (10, 'shampoo', 'Shampoo', 500, 1, 1), (11, 'lotion', 'Lotion', 500, 1, 5), (12, 'mascara', 'Mascara', 500, 1, 6);
+        (10, 'shampoo', 'Shampoo', 500, 1, 5), (11, 'lotion', 'Lotion', 500, 1, 5), (12, 'mascara', 'Mascara', 500, 1, 1),
+        (13, 'crisps-2', 'Sharing Crisps', 500, 1, 3);
     `);
     const { items } = await queryProducts(env, { categorySlugs: BEAUTY_CATEGORY_SLUGS, sort: 'title' });
     expect(items.map((p) => p.title)).toEqual(['Lotion', 'Mascara', 'Shampoo']);
@@ -85,6 +88,9 @@ describe('beauty across several categories', () => {
 
 describe('beauty keyword rules', () => {
   it("files a lip stain called \"Espresso\" under makeup, not coffee", async () => {
+    // Deliberately the pre-0018 slugs: migration 0015 was written against them
+    // and joins categories on slug. At runtime rules carry a category_id, so
+    // the seven-category rename did not disturb any rule already stored.
     sql.exec(`
       INSERT INTO categories (id, slug, name, sort_order) VALUES (5, 'skin-and-body-care', 'Skin & Body Care', 50), (6, 'makeup-and-fragrance', 'Makeup & Fragrance', 60);
       INSERT INTO ebay_category_map (match_type, match_value, category_id, priority) VALUES ('keyword', 'espresso', 2, 100);

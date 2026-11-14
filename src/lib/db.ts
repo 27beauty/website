@@ -47,14 +47,36 @@ export async function listProductChoices(env: Env): Promise<Array<{ id: number; 
   return results ?? [];
 }
 
-/** The original beauty category (now Hair Care). Kept: old links and the eBay rules point at it, so it can't be deleted. */
-export const BEAUTY_CATEGORY_SLUG = 'hair-beauty';
+/** The lead category. The homepage and /category/beauty are built on it, so it cannot be deleted. */
+export const BEAUTY_CATEGORY_SLUG = 'make-up';
 
 /**
  * Beauty is the shop's focus: the homepage showcase and /category/beauty list
  * everything in these categories together.
  */
-export const BEAUTY_CATEGORY_SLUGS = [BEAUTY_CATEGORY_SLUG, 'skin-and-body-care', 'makeup-and-fragrance'];
+export const BEAUTY_CATEGORY_SLUGS = [BEAUTY_CATEGORY_SLUG, 'personal-care'];
+
+/**
+ * Categories the seven-category restructure retired, and where each now lives
+ * (migration 0018). `/category/:slug` 301s these, so links, search results and
+ * printed QR cards made before the change still land on the right page.
+ */
+export const RETIRED_CATEGORY_SLUGS: Record<string, string> = {
+  'hair-beauty': 'personal-care',
+  'skin-and-body-care': 'personal-care',
+  'makeup-and-fragrance': 'make-up',
+  'health-and-welfare': 'health-wellbeing',
+  'coffee-tea': 'food-drink',
+  'home-living': 'home',
+  'diy-tools': 'home',
+  'pet-food-treats': 'pet-supplies',
+  // Retired even earlier, by the reshape that preceded the seven:
+  'snacks-sweets': 'food-drink',
+  'breakfast-bars': 'food-drink',
+  'household-appliances': 'home',
+  garden: 'home',
+  electronics: 'home',
+};
 
 /** Every category with a count of all its products (any status), for Admin → Categories. */
 export async function listCategoriesForAdmin(env: Env): Promise<Array<Category & { product_count: number }>> {
