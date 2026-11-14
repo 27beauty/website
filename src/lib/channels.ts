@@ -827,7 +827,7 @@ export async function readiness(env: Env): Promise<ChannelReadiness> {
   const [accounts, counts, toReview, startTakenAt, enabled] = await Promise.all([
     listEbayAccounts(env),
     env.DB.prepare(`SELECT channel, account, COUNT(*) AS n FROM channel_listings GROUP BY channel, account`).all<{ channel: string; account: string; n: number }>(),
-    env.DB.prepare(`SELECT COUNT(*) AS n FROM channel_listings WHERE status = 'review'`).first<{ n: number }>(),
+    env.DB.prepare(`SELECT COUNT(*) AS n FROM channel_listings WHERE status = 'review' AND fulfilment = 'merchant'`).first<{ n: number }>(),
     getSetting<string | null>(env, 'stock.start_taken_at', null),
     centralStockEnabled(env),
   ]);
@@ -1561,7 +1561,9 @@ export async function countFailedListings(env: Env): Promise<number> {
 
 /** How many listings are waiting on the owner in Review matches. */
 export async function countListingsToReview(env: Env): Promise<number> {
-  const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM channel_listings WHERE status = 'review'`).first<{ n: number }>();
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM channel_listings WHERE status = 'review' AND fulfilment = 'merchant'`,
+  ).first<{ n: number }>();
   return row?.n ?? 0;
 }
 
@@ -1570,11 +1572,19 @@ export async function getChannelListing(env: Env, id: number): Promise<ChannelLi
   return env.DB.prepare('SELECT * FROM channel_listings WHERE id = ?').bind(id).first<ChannelListing>();
 }
 
+/**
+ * The listings waiting for the owner to say what they are.
+ *
+ * FBA is left out. Amazon ships those, so their quantity is never counted and
+ * never pushed, and linking one decides nothing — they were 41 of the 87
+ * items waiting and buried the ones that matter. They stay in the table (the
+ * parcel sizes come from them) but they are not asked about.
+ */
 export async function listingsToReview(env: Env, limit = 100): Promise<(ChannelListing & { suggested_title: string | null })[]> {
   const { results } = await env.DB.prepare(
     `SELECT l.*, p.title AS suggested_title
        FROM channel_listings l LEFT JOIN products p ON p.id = l.suggested_product_id
-      WHERE l.status = 'review'
+      WHERE l.status = 'review' AND l.fulfilment = 'merchant'
       ORDER BY l.match_score DESC NULLS LAST, l.title
       LIMIT ?`,
   )

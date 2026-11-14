@@ -505,10 +505,27 @@ async function reconcileEndedListings(
       diff.toUpdate.push({ product: row, listing });
     } else if (confirmedThisRun) {
       endedCount++;
+      // The eBay listing has ended, but the product may still be sellable:
+      // the shop posts Amazon FBM orders itself, and the same item can be on
+      // the other eBay shop. Archiving regardless took products off the
+      // website that Amazon still had in stock — 18 of them in production,
+      // including 318 Fino Shiseido and 98 Lavazza — and they came back
+      // archived within the hour each time they were restored by hand.
+      // So: stop selling it on eBay, and only archive when nothing else is
+      // keeping it alive. FBA does not count, because the website only sells
+      // what the owner ships.
       statements.push(
         env.DB.prepare(
-          `UPDATE products SET status = 'archived', ebay_stock = 0, ebay_synced_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
-        ).bind(row.id),
+          `UPDATE products
+              SET ebay_stock = 0, ebay_synced_at = datetime('now'), updated_at = datetime('now'),
+                  status = CASE
+                    WHEN EXISTS (SELECT 1 FROM channel_listings l
+                                  WHERE l.product_id = products.id AND l.status = 'linked'
+                                    AND l.fulfilment = 'merchant'
+                                    AND NOT (l.channel = 'ebay' AND l.account = ?2 AND l.external_id = ?3))
+                    THEN status ELSE 'archived' END
+            WHERE id = ?1`,
+        ).bind(row.id, accountKey, bareItemId(row.ebay_item_id as string)),
       );
     } else {
       continue;

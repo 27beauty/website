@@ -75,6 +75,54 @@ async function importOne(itemId: string, title: string): Promise<void> {
   await runEbaySync(env, 'manual');
 }
 
+describe('an eBay listing ends but the product sells elsewhere', () => {
+  const linkedListing = (productId: number, o: { channel: string; account: string; ext: string; fulfilment: string; qty: number }) =>
+    sql.exec(`INSERT INTO channel_listings (product_id, channel, account, external_id, title, status, fulfilment, channel_qty, pushed_qty)
+              VALUES (${productId}, '${o.channel}', '${o.account}', '${o.ext}', 'Still on sale', 'linked', '${o.fulfilment}', ${o.qty}, ${o.qty})`);
+
+  /** Import a product, then have eBay confirm its listing has ended. */
+  async function endOnEbay(itemId: string, title: string): Promise<number> {
+    await importOne(itemId, title);
+    const id = products()[0].id;
+    live = [];
+    exists = new Set(); // a per-item lookup now says it is gone
+    return id;
+  }
+
+  it('stays on the website when Amazon still ships it', async () => {
+    // The shop posts Amazon FBM orders itself, so the product is still
+    // sellable even though eBay is done with it.
+    const id = await endOnEbay('v1|700|0', 'Fino Shiseido Premium Touch Hair Oil 70ml');
+    linkedListing(id, { channel: 'ebay', account: 'shop1', ext: '700', fulfilment: 'merchant', qty: 5 });
+    linkedListing(id, { channel: 'amazon', account: 'A2SELLERTEST', ext: 'AMZ-700', fulfilment: 'merchant', qty: 318 });
+    await runEbaySync(env, 'manual');
+    expect(products()[0].status).toBe('active');
+    // ...but it is off eBay: nothing is sent to a listing that has ended.
+    expect(sql.all(`SELECT ebay_stock FROM products WHERE id = ${id}`)).toEqual([{ ebay_stock: 0 }]);
+    expect(sql.all(`SELECT status FROM channel_listings WHERE external_id = '700'`)).toEqual([{ status: 'ignored' }]);
+  });
+
+  it('is archived when the only thing left is FBA, which the shop does not post', async () => {
+    const id = await endOnEbay('v1|701|0', 'Barbie Unboxed Doll & Accessories');
+    linkedListing(id, { channel: 'amazon', account: 'A2SELLERTEST', ext: 'AMZ-701', fulfilment: 'amazon', qty: 40 });
+    await runEbaySync(env, 'manual');
+    expect(products()[0].status).toBe('archived');
+  });
+
+  it('stays on the website when the other eBay shop still lists it', async () => {
+    const id = await endOnEbay('v1|702|0', 'Lavazza Tales of Napoli 100 Coffee Capsules');
+    linkedListing(id, { channel: 'ebay', account: 'shop2', ext: '999', fulfilment: 'merchant', qty: 98 });
+    await runEbaySync(env, 'manual');
+    expect(products()[0].status).toBe('active');
+  });
+
+  it('is still archived when nothing else is selling it', async () => {
+    await endOnEbay('v1|703|0', 'Something Only On eBay');
+    await runEbaySync(env, 'manual');
+    expect(products()[0].status).toBe('archived');
+  });
+});
+
 describe('a product the owner deleted', () => {
   // Deleting is useless if the next sync imports it straight back, which is
   // what happened before: the item is still in eBay's feed with no matching

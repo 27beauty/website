@@ -12,6 +12,7 @@ import {
   adoptChannelCounts,
   Budget,
   fillAmazonDimensions,
+  listingsToReview,
   dirtyListings,
   enableCentralStock,
   ensureEbayListingRows,
@@ -749,5 +750,29 @@ describe('parcel size and weight for Parcel2Go', () => {
     amazonSays('AMZ-FBA', { item_package_weight: [{ value: 1.2, unit: 'kg' }] });
     await fillAmazonDimensions(env, new Budget(20));
     expect((sizeOf(fba[0].product_id) as { weight_g: number }).weight_g).toBe(1200);
+  });
+});
+
+describe('what the owner is asked to review', () => {
+  it('leaves out FBA, which the website never sells', async () => {
+    await goLive();
+    sql.exec(`
+      INSERT INTO channel_listings (channel, account, external_id, title, status, fulfilment, channel_qty) VALUES
+        ('amazon', '${SELLER}', 'FBA-1', 'Shipped by Amazon', 'review', 'amazon', 40),
+        ('amazon', '${SELLER}', 'FBM-1', 'Posted by the shop', 'review', 'merchant', 4);
+    `);
+    const waiting = await listingsToReview(env);
+    expect(waiting.map((l) => l.external_id)).toEqual(['FBM-1']);
+  });
+
+  it('counts the same listings the review screen shows, so the badge is not a lie', async () => {
+    await goLive();
+    sql.exec(`
+      INSERT INTO channel_listings (channel, account, external_id, title, status, fulfilment, channel_qty) VALUES
+        ('amazon', '${SELLER}', 'FBA-2', 'Shipped by Amazon', 'review', 'amazon', 40),
+        ('amazon', '${SELLER}', 'FBA-3', 'Shipped by Amazon too', 'review', 'amazon', 9);
+    `);
+    const r = await readiness(env);
+    expect(r.toReview).toBe((await listingsToReview(env)).length);
   });
 });

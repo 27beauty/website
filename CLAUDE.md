@@ -85,6 +85,16 @@ npm run db:seed:local      # categories, settings, QR10 coupon
   least recently confirmed first. A run that does ~20 sequential API calls takes
   ~20s and gets killed mid-flight, which is what left 1,471 runs stuck at
   'running'. Keep cron work short and resumable.
+- **FBA is Amazon's to ship, so the website ignores it.** Its quantity is
+  never counted or pushed, and it is left out of Review matches and the "to
+  review" counts — both counters must keep matching `listingsToReview`, or the
+  badge sends the owner to an empty screen. The one exception is
+  `fillAmazonDimensions`: the box is the same box.
+- **An ended eBay listing does not archive a product that sells elsewhere.**
+  `reconcileEndedListings` zeroes `ebay_stock` and sets the listing to
+  'ignored', but only archives when no other linked merchant listing remains.
+  Archiving regardless pulled products off the website that Amazon still had
+  in stock, and they re-archived within the hour each time they were restored.
 - **Parcel2Go prices a parcel from `products.weight_g` and the three
   `*_cm` columns**, falling back to the default box in settings when they are
   empty. `fillAmazonDimensions` in `channels.ts` copies them from a product's
