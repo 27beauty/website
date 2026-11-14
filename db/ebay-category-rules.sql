@@ -1,3 +1,13 @@
+-- ⚠ OUT OF DATE — DO NOT RUN AGAINST PRODUCTION AS IT STANDS.
+-- This file starts by deleting every keyword rule, and it holds no Make up or
+-- Health & Wellbeing rules at all, so running it would wipe the curated set
+-- production relies on (50 rules, including the Make up ones from migrations
+-- 0014/0015 and the filing rules from 0018/0019) and file nothing under those
+-- two categories. Its slugs were updated for the seven-category restructure,
+-- but its multi-row VALUES list also exceeds what D1 accepts in one compound
+-- SELECT, so it fails part-way. Keep it for reference; add new rules as a
+-- migration with one INSERT each, as migrations/0019_filing_rules.sql does.
+
 -- Category rules for the eBay sync, widened from the original nine-keyword
 -- seed after importing the real 90-listing catalogue: the shop is recognised
 -- by brand (Christophe Robin, Scottish Fine Soaps, Bestway, Makita...) as much

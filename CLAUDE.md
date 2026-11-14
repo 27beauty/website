@@ -116,7 +116,7 @@ src/lib/ebay/orders.ts   Fulfillment API orders → sale lines
 src/lib/amazon/spapi.ts  Amazon SP-API: listings, MFN orders, FBM quantity
 src/routes/admin/channels.tsx  Sales channels (connect, go-live) + Review matches
 src/routes/admin/stock.tsx  the Stock screen: website vs eBay quantity per channel
-migrations/              D1 schema, 0001–0018. Two files share each of the numbers 0003 and 0004
+migrations/              D1 schema, 0001–0019. Two files share each of the numbers 0003 and 0004
                          (parallel branches); production has applied all of them under these
                          exact names, so never rename a migration file.
 db/                      seed.sql (reference data), ebay-catalogue.sql (the 90
