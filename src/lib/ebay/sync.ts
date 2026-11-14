@@ -5,7 +5,14 @@ import { centralStockEnabled } from '../stock';
 import { uniqueSlug } from '../util';
 import { normaliseTitle } from '../matching';
 import { fetchBrowseListings, listingState } from './browse';
-import { diffListings, locksFromRow, resolveUpdateFields, type ExistingProductRow, type ListingDiff } from './diff';
+import {
+  diffListings,
+  locksFromRow,
+  productNeedsWrite,
+  resolveUpdateFields,
+  type ExistingProductRow,
+  type ListingDiff,
+} from './diff';
 import { Budget, EbayRateLimitError } from './http';
 import { getUserAccessToken } from './oauth';
 import { getItemStatus } from './trading';
@@ -30,6 +37,8 @@ const MAX_LISTINGS_PER_RUN = 1000;
  * the shops, so the whole allowance is used every run.
  */
 const RUN_REQUEST_BUDGET = 44;
+/** Ended-listing checks per run. See the note in the re-check loop. */
+const RECHECK_PER_RUN = 4;
 /** Of each shop's share, requests kept back for checking whether missing listings have ended. */
 const END_CHECK_RESERVE = 4;
 /** Consecutive missed runs before a product is archived — see the note at diff.toEnd below. */
@@ -46,6 +55,25 @@ export async function runEbaySync(env: Env, trigger: 'cron' | 'manual' | 'api'):
 
   const result: SyncResult = { created: 0, updated: 0, ended: 0, errors: [] };
   let runId: number | undefined;
+
+  // A run the platform stops mid-flight never reaches closeSyncRun, so its row
+  // stays 'running' for ever — 1,471 of 8,838 rows in production, which made
+  // repeated failures look like silence in Admin → Sync. Close the abandoned
+  // ones so a failing sync is visible. Never fatal: a sync must still run even
+  // if this does not.
+  try {
+    await env.DB.prepare(
+      `UPDATE sync_runs
+          SET status = 'error', finished_at = datetime('now'),
+              message = COALESCE(NULLIF(message, ''), 'Stopped before finishing — the worker ended mid-run')
+        WHERE id IN (SELECT id FROM sync_runs
+                      WHERE source = 'ebay' AND status = 'running'
+                        AND started_at < datetime('now', '-15 minutes')
+                      ORDER BY id LIMIT 500)`,
+    ).run();
+  } catch {
+    // ignored on purpose — housekeeping must never stop a sync
+  }
 
   try {
     const started = await env.DB.prepare(
@@ -243,6 +271,7 @@ async function syncAccount(
   }
 
   let updated = 0;
+  const hourAgo = new Date(Date.now() - 3600_000).toISOString().replace('T', ' ').slice(0, 19);
   for (const { product, listing } of diff.toUpdate) {
     if (product.merged_into) continue;
     const locks = locksFromRow(product);
@@ -262,6 +291,20 @@ async function syncAccount(
     if (listing.pricePence === null && !locks.priceLocked) {
       errors.push(`"${listing.title}" (${listing.itemId}): non-GBP or unreadable price — kept previous price`);
     }
+    // eBay re-reports every live listing on every run. Rewriting a row whose
+    // values are identical cost ~11,400 pointless D1 writes a day and left
+    // products.updated_at permanently "just changed". Unchanged listings get
+    // only their "last confirmed" stamp, and that at most hourly: it exists to
+    // order the ended-listing checks, so it does not need ten-minute accuracy.
+    if (!productNeedsWrite(product, fields, { categoryId, sku: listing.sku, url: listing.itemWebUrl, ebayStock: listing.stock })) {
+      if (!product.ebay_synced_at || product.ebay_synced_at < hourAgo) {
+        statements.push(
+          env.DB.prepare(`UPDATE products SET ebay_synced_at = datetime('now') WHERE id = ?`).bind(product.id),
+        );
+      }
+      continue;
+    }
+
     const sets: string[] = [];
     const values: unknown[] = [];
     for (const [key, value] of Object.entries(fields)) {
@@ -386,8 +429,19 @@ async function reconcileEndedListings(
     }
   }
   const ended: ExistingProductRow[] = [];
+  let checked = 0;
   for (const row of missing) {
+    // eBay's search leaves out listings it still considers live — a sold-out
+    // one under Out-of-stock control, say — so the same products come back as
+    // "missing" on every run and each needs its own Trading API call. In
+    // production that was ~20 sequential calls a run, which is what pushed a
+    // run to ~20 seconds and got it killed mid-flight often enough to leave
+    // 1,471 unfinished runs. A few per run, least recently confirmed first,
+    // cycles through them all within the hour at a fraction of the time and
+    // the API quota. Anything that looks relisted is still sorted first.
+    if (checked >= RECHECK_PER_RUN) break;
     if (!budget.take()) break; // the rest are checked on later runs, least recently confirmed first
+    checked++;
     let state;
     try {
       state = sellerToken
@@ -479,7 +533,9 @@ async function listActiveAccounts(env: Env): Promise<EbayAccount[]> {
 async function listAccountProducts(env: Env, accountLabel: string): Promise<ExistingProductRow[]> {
   const { results } = await env.DB.prepare(
     `SELECT id, ebay_item_id, price_locked, stock_locked, content_locked, ebay_miss_count, merged_into,
-            title, status, ebay_synced_at, (description IS NOT NULL AND trim(description) != '') AS has_description
+            title, status, ebay_synced_at, price_pence, stock, image_url, images_json,
+            ebay_sku, ebay_url, ebay_stock, category_id,
+            (description IS NOT NULL AND trim(description) != '') AS has_description
      FROM products WHERE source = 'ebay' AND ebay_account = ?`,
   )
     .bind(accountLabel)

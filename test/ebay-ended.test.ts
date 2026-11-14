@@ -74,7 +74,51 @@ async function importOne(itemId: string, title: string): Promise<void> {
   await runEbaySync(env, 'manual');
 }
 
+describe('eBay sync: run bookkeeping', () => {
+  it('closes a run the platform stopped mid-flight, and leaves a live one alone', async () => {
+    sql.exec(`
+      INSERT INTO sync_runs (id, source, trigger, status, started_at)
+        VALUES (900, 'ebay', 'cron', 'running', datetime('now', '-3 hours')),
+               (901, 'ebay', 'cron', 'running', datetime('now', '-1 minute'));
+    `);
+    await runEbaySync(env, 'manual');
+    const rows = sql.all(
+      `SELECT id, status, finished_at IS NOT NULL AS closed FROM sync_runs WHERE id IN (900, 901) ORDER BY id`,
+    );
+    // The abandoned one is reported as a failure instead of staying 'running'
+    // for ever; one that may still be in flight is untouched.
+    expect(rows).toEqual([
+      { id: 900, status: 'error', closed: 1 },
+      { id: 901, status: 'running', closed: 0 },
+    ]);
+  });
+});
+
 describe('eBay sync: ended listings', () => {
+  it('checks only a few missing listings per run, oldest confirmation first', async () => {
+    // Import six, then have eBay's search stop returning them while a per-item
+    // lookup still reports every one as live.
+    const ids = [1, 2, 3, 4, 5, 6].map((n) => `v1|10${n}|0`);
+    live = ids.map((itemId, i) => ({ itemId, title: `Vitamin D ${i + 1} 90 Tablets` }));
+    exists = new Set(ids);
+    await runEbaySync(env, 'manual');
+    expect(products()).toHaveLength(6);
+    sql.exec(`UPDATE products SET ebay_synced_at = '2020-01-01 00:00:0' || id`);
+    live = [];
+
+    const confirmed = () =>
+      (sql.all(`SELECT COUNT(*) AS n FROM products WHERE ebay_synced_at > '2021-01-01'`) as Array<{ n: number }>)[0].n;
+
+    await runEbaySync(env, 'manual');
+    // A run must not spend a per-item API call on every missing listing: that
+    // is what made runs slow enough to be killed.
+    expect(confirmed()).toBe(4);
+    // The two left over are picked up next time, so all six are still covered.
+    await runEbaySync(env, 'manual');
+    expect(confirmed()).toBe(6);
+    expect(products().every((p) => p.status === 'active')).toBe(true);
+  });
+
   it('takes a product off the shop once eBay confirms its listing has ended', async () => {
     await importOne('v1|100|0', 'Vitamin D 1000iu 90 Tablets');
     live = [];

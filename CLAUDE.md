@@ -64,6 +64,18 @@ npm run db:seed:local      # categories, settings, QR10 coupon
   whole basket by default.** `product_id` only records which product a QR card
   was made for (and what its landing page features); the discount is restricted
   to that product only when `product_only = 1`.
+- **The eBay sync must not write what has not changed.** eBay re-reports every
+  live listing on every run; `productNeedsWrite` in `src/lib/ebay/diff.ts`
+  decides whether a row is worth rewriting, and unchanged listings get only
+  their `ebay_synced_at` stamp, at most hourly. `products.updated_at` therefore
+  means "the content really changed" — `ebayProductsChanged` in `channels.ts`
+  relies on that to skip the 5-minute housekeeping.
+- **Per-run work is capped, not unbounded.** eBay's search omits listings it
+  still counts as live, so the same products look "missing" every run and each
+  costs a Trading API call; `RECHECK_PER_RUN` limits how many a run checks,
+  least recently confirmed first. A run that does ~20 sequential API calls takes
+  ~20s and gets killed mid-flight, which is what left 1,471 runs stuck at
+  'running'. Keep cron work short and resumable.
 - **R2 has no spending cap, so the app is the cap.** Every write goes through
   `canStore()` in `src/lib/media.ts`, replaced and deleted images are reclaimed,
   and `/media/*` is edge-cached so reads rarely reach R2. Never add an R2 write
@@ -104,7 +116,7 @@ src/lib/ebay/orders.ts   Fulfillment API orders → sale lines
 src/lib/amazon/spapi.ts  Amazon SP-API: listings, MFN orders, FBM quantity
 src/routes/admin/channels.tsx  Sales channels (connect, go-live) + Review matches
 src/routes/admin/stock.tsx  the Stock screen: website vs eBay quantity per channel
-migrations/              D1 schema, 0001–0010. Two files share each of the numbers 0003 and 0004
+migrations/              D1 schema, 0001–0017. Two files share each of the numbers 0003 and 0004
                          (parallel branches); production has applied all of them under these
                          exact names, so never rename a migration file.
 db/                      seed.sql (reference data), ebay-catalogue.sql (the 90

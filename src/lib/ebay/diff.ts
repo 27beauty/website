@@ -21,6 +21,16 @@ export interface ExistingProductRow {
   ebay_synced_at?: string | null;
   /** 1 when the product already has a description; the sync fetches one for products that don't. */
   has_description?: number;
+  // Current values, so a run can tell a listing that actually changed from one
+  // that eBay simply reported again. See productNeedsWrite.
+  price_pence?: number | null;
+  stock?: number;
+  image_url?: string | null;
+  images_json?: string | null;
+  ebay_sku?: string | null;
+  ebay_url?: string | null;
+  ebay_stock?: number | null;
+  category_id?: number | null;
 }
 
 export interface ListingDiff {
@@ -118,4 +128,50 @@ export function resolveUpdateFields(
   // Category is not written here: the sync only fills it in when a product
   // has none (sync.ts), so a category the owner picked is never overwritten.
   return out;
+}
+
+/** The values the sync writes on every confirmed listing besides {@link UpdatableFields}. */
+export interface SyncStamp {
+  categoryId: number | null;
+  sku: string | null;
+  url: string | null;
+  ebayStock: number | null;
+}
+
+/**
+ * True when a listing eBay has just confirmed differs from what the product
+ * already holds, i.e. the row is worth rewriting.
+ *
+ * Without this the sync rewrote every live listing on every run — in
+ * production 79 products every ten minutes, around 11,400 D1 row writes a day
+ * that changed nothing. It also meant `products.updated_at` always read as
+ * "changed moments ago", so nothing downstream could use it to tell whether
+ * the catalogue had really moved.
+ *
+ * `description` is only ever a candidate for products that have none (sync.ts
+ * fetches item details just for those), so its presence here always means new
+ * content and never needs comparing against the stored text.
+ */
+export function productNeedsWrite(
+  product: ExistingProductRow,
+  fields: UpdatableFields,
+  stamp: SyncStamp,
+): boolean {
+  // Confirmed live again, so an earlier wrong archive or miss streak is undone.
+  if (product.status === 'archived') return true;
+  if (product.ebay_miss_count !== 0) return true;
+  // The rules only fill a category in when the product has none.
+  if (product.category_id == null && stamp.categoryId != null) return true;
+
+  if (fields.description !== undefined) return true;
+  if (fields.price_pence !== undefined && fields.price_pence !== product.price_pence) return true;
+  if (fields.stock !== undefined && fields.stock !== product.stock) return true;
+  if (fields.title !== undefined && fields.title !== product.title) return true;
+  if (fields.image_url !== undefined && (fields.image_url ?? null) !== (product.image_url ?? null)) return true;
+  if (fields.images_json !== undefined && fields.images_json !== (product.images_json ?? null)) return true;
+
+  if ((stamp.sku ?? null) !== (product.ebay_sku ?? null)) return true;
+  if ((stamp.url ?? null) !== (product.ebay_url ?? null)) return true;
+  if ((stamp.ebayStock ?? null) !== (product.ebay_stock ?? null)) return true;
+  return false;
 }
