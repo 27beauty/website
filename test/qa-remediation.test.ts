@@ -8,6 +8,8 @@ import type { Env } from '../src/types';
 import worker from '../src/index';
 import { createTestD1, createTestKV } from './helpers/d1';
 import { applicableStockEdits, requestedStockEdits } from '../src/routes/admin/products';
+import { createPendingOrder, markOrderCancelled, markOrderPaid } from '../src/lib/orders';
+import { buildCart } from '../src/lib/cart';
 
 let env: Env;
 let sql: ReturnType<typeof createTestD1>;
@@ -170,5 +172,57 @@ describe('QR-02: a saved code that stops working must not trap the basket', () =
     // a way to clear it — otherwise the customer is bounced back here for
     // ever with nothing on screen to act on.
     expect(stuck).toContain('Remove code and continue without the discount');
+  });
+});
+
+describe('PAY-03: a payment that lands is never dropped', () => {
+  const stockOf = (id: number) => (sql.all(`SELECT stock FROM products WHERE id = ${id}`)[0] as { stock: number }).stock;
+  const orderRow = (id: number) =>
+    sql.all(`SELECT status, stock_applied, notes FROM orders WHERE id = ${id}`)[0] as {
+      status: string;
+      stock_applied: number;
+      notes: string | null;
+    };
+
+  async function pendingOrder() {
+    sql.exec(`INSERT INTO products (id, slug, title, price_pence, stock, status) VALUES (1, 'p', 'A Product', 1000, 5, 'active')`);
+    const cart = await buildCart(env, [{ id: 1, q: 2 }], null);
+    const order = await createPendingOrder(env, { cart, email: null, name: null });
+    sql.exec(`UPDATE orders SET stripe_session_id = 'cs_test_1' WHERE id = ${order.id}`);
+    return order.id;
+  }
+
+  it('still records the payment when the expiry arrived first', async () => {
+    // Stripe does not promise webhook order. Expired then completed used to
+    // leave the customer charged and the order cancelled, in silence.
+    const id = await pendingOrder();
+    await markOrderCancelled(env, { sessionId: 'cs_test_1' });
+    expect(orderRow(id).status).toBe('cancelled');
+
+    const { transitioned } = await markOrderPaid(env, { sessionId: 'cs_test_1', paymentIntent: 'pi_1' });
+    expect(transitioned).toBe(true);
+    const after = orderRow(id);
+    expect(after.status).toBe('paid');
+    expect(after.stock_applied).toBe(1);
+    expect(stockOf(1)).toBe(3); // the two sold actually came off
+    // ...and the owner is told, because this one deserves a look.
+    expect(after.notes ?? '').toContain('cancelled and then paid');
+  });
+
+  it('takes the stock exactly once when Stripe retries the same event', async () => {
+    const id = await pendingOrder();
+    const first = await markOrderPaid(env, { sessionId: 'cs_test_1', paymentIntent: 'pi_1' });
+    const second = await markOrderPaid(env, { sessionId: 'cs_test_1', paymentIntent: 'pi_1' });
+    expect(first.transitioned).toBe(true);
+    expect(second.transitioned).toBe(false);
+    expect(stockOf(1)).toBe(3);
+    expect(orderRow(id).status).toBe('paid');
+  });
+
+  it('does not quietly un-cancel an order that was never paid', async () => {
+    const id = await pendingOrder();
+    await markOrderCancelled(env, { sessionId: 'cs_test_1' });
+    expect(orderRow(id).status).toBe('cancelled');
+    expect(stockOf(1)).toBe(5); // nothing taken
   });
 });

@@ -276,13 +276,35 @@ export async function markOrderPaid(env: Env, input: MarkOrderPaidInput): Promis
            customer_name = COALESCE(?, customer_name),
            phone = COALESCE(?, phone),
            updated_at = datetime('now')
-     WHERE id = ? AND status = 'pending'`,
+     WHERE id = ? AND status IN ('pending', 'cancelled')`,
   )
     .bind(paymentIntent, shippingJson, input.email ?? null, input.name ?? null, input.phone ?? null, order.id)
     .run();
 
   const transitioned = (res.meta.changes ?? 0) > 0;
   if (transitioned) {
+    // 'cancelled' is accepted as well as 'pending' because money has actually
+    // changed hands. Stripe does not promise webhooks in order, so the
+    // expiry for a session can arrive before its completion, and the owner
+    // can cancel a pending order moments before the customer pays. Taking
+    // only 'pending' meant the payment was dropped without a sound: charged,
+    // order cancelled, no stock moved and nobody told.
+    //
+    // Deducting stock stays safe because applyStockForOrder is guarded by
+    // stock_applied, and a pending order that was cancelled never applied any
+    // in the first place, so nothing was handed back to undo.
+    if (order.status === 'cancelled') {
+      await env.DB.prepare(
+        `UPDATE orders
+            SET notes = COALESCE(notes || char(10), '') || ?, updated_at = datetime('now')
+          WHERE id = ?`,
+      )
+        .bind(
+          'This order was cancelled and then paid for — Stripe confirmed the payment afterwards. Check it before dispatch.',
+          order.id,
+        )
+        .run();
+    }
     await applyStockForOrder(env, order.id);
   }
 
