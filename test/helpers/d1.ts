@@ -103,5 +103,12 @@ export function createTestKV(): KVNamespace {
     delete: async (k: string) => {
       store.delete(k);
     },
+    // Real Workers KV pages its listing; sessions are enumerated this way
+    // when a password change has to sign other devices out.
+    list: async ({ prefix = '' }: { prefix?: string; cursor?: string } = {}) => ({
+      keys: [...store.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name })),
+      list_complete: true,
+      cacheStatus: null,
+    }),
   } as unknown as KVNamespace;
 }

@@ -443,3 +443,60 @@ describe('deleting several products at once from the Stock screen', () => {
     expect(titles()).toHaveLength(3);
   });
 });
+
+describe('S2: changing the password signs other devices out', () => {
+  // Without this, the one thing a person does when they suspect their account
+  // is compromised achieved nothing: a session cookie someone else already
+  // held stayed valid for its full lifetime.
+  const SECRET = 'test-session-secret-0123456789abcdef';
+  const CSRF = 'csrf-token-for-test';
+  // 'LocalTest12345!'
+  const HASH = 'pbkdf2$100000$LgWuZrzy4fDutrdkfGBUGQ$h0IxVAKh8kvTo2L1QICDgJ0Rn51HDnVGCQaVE7z8s8I';
+
+  async function session(token: string, userId: number) {
+    const { signPayload } = await import('../src/lib/crypto');
+    await env.KV.put(
+      `admin:session:${token}`,
+      JSON.stringify({ userId, email: 'o@x.dev', name: null, role: 'owner', issuedAt: Date.now(), csrf: CSRF }),
+    );
+    return `admin_session=${await signPayload(token, SECRET)}`;
+  }
+
+  it('drops every session of that admin and leaves other admins alone', async () => {
+    const { revokeSessionsForUser } = await import('../src/lib/admin-auth');
+    await session('phone', 1);
+    await session('laptop', 1);
+    await session('someone-else', 2);
+
+    expect(await revokeSessionsForUser(env, 1)).toBe(2);
+    expect(await env.KV.get('admin:session:phone')).toBeNull();
+    expect(await env.KV.get('admin:session:laptop')).toBeNull();
+    expect(await env.KV.get('admin:session:someone-else')).not.toBeNull();
+  });
+
+  it('through the real route: the old cookie stops working and a new one is issued', async () => {
+    sql.exec(`INSERT INTO admin_users (id, email, password_hash, role) VALUES (1, 'o@x.dev', '${HASH}', 'owner')`);
+    const stolen = await session('stolen', 1);
+
+    const res = await worker.fetch(
+      new Request('https://27beauty.co.uk/admin/settings/password', {
+        method: 'POST',
+        body: new URLSearchParams({
+          _csrf: CSRF,
+          current: 'LocalTest12345!',
+          password: 'BrandNewPass99!',
+          confirm: 'BrandNewPass99!',
+        }).toString(),
+        headers: { cookie: stolen, 'content-type': 'application/x-www-form-urlencoded' },
+      }),
+      { ...env, SESSION_SECRET: SECRET } as Env,
+      ctx(),
+    );
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toContain('msg=');
+    // A replacement session is set, so the owner keeps their own tab...
+    expect((res.headers.getSetCookie?.() ?? []).join(';')).toContain('admin_session=');
+    // ...while the cookie someone else was holding is now worthless.
+    expect(await env.KV.get('admin:session:stolen')).toBeNull();
+  });
+});

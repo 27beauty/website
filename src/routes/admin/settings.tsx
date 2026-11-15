@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { AppBindings, EbayAccount, SyncRun } from '../../types';
-import { getAdmin, validateNewPassword, verifyCsrf } from '../../lib/admin-auth';
+import { createSession, getAdmin, revokeSessionsForUser, validateNewPassword, verifyCsrf } from '../../lib/admin-auth';
 import { AdminLayout, CsrfField } from '../../ui/admin-layout';
 import { getAllSettings, setSetting } from '../../lib/settings';
 import { hashPassword, verifyPassword } from '../../lib/crypto';
@@ -654,5 +654,20 @@ settings.post('/password', async (c) => {
 
   const newHash = await hashPassword(password);
   await c.env.DB.prepare('UPDATE admin_users SET password_hash = ? WHERE id = ?').bind(newHash, admin.userId).run();
-  return c.redirect('/admin/settings/password?msg=' + encodeURIComponent('Password updated.'), 303);
+  // Changing the password is what someone does when they think a session has
+  // been taken, so it has to end every session — including, briefly, this
+  // one. A fresh session is issued straight after so the owner is not thrown
+  // out of the tab they are standing in.
+  const revoked = await revokeSessionsForUser(c.env, admin.userId);
+  await createSession(c, { id: admin.userId, email: admin.email, name: admin.name, role: admin.role });
+  const elsewhere = Math.max(revoked - 1, 0);
+  return c.redirect(
+    '/admin/settings/password?msg=' +
+      encodeURIComponent(
+        elsewhere
+          ? `Password updated. ${elsewhere} other signed-in ${elsewhere === 1 ? 'device was' : 'devices were'} signed out.`
+          : 'Password updated.',
+      ),
+    303,
+  );
 });

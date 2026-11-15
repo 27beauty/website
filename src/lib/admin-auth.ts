@@ -98,6 +98,43 @@ export async function createSession(c: Context<AppBindings>, user: LoginUser): P
   markOwnerDevice(c);
 }
 
+/**
+ * Ends every signed-in session belonging to one admin.
+ *
+ * Changing a password has to mean something: without this, a session cookie
+ * someone else already has stays valid for its full lifetime, so the one
+ * action a person takes when they think they have been compromised did not
+ * lock the intruder out.
+ *
+ * Sessions are enumerated from KV rather than checked against a version
+ * column on every request — there are only ever a handful, this runs only on
+ * a password change, and the alternative would add a database read to every
+ * single admin page load.
+ */
+export async function revokeSessionsForUser(env: Env, userId: number): Promise<number> {
+  let cursor: string | undefined;
+  let revoked = 0;
+  do {
+    const page = await env.KV.list({ prefix: 'admin:session:', cursor });
+    for (const key of page.keys) {
+      const raw = await env.KV.get(key.name);
+      if (!raw) continue;
+      try {
+        const record = JSON.parse(raw) as AdminSessionRecord;
+        if (record.userId === userId) {
+          await env.KV.delete(key.name);
+          revoked++;
+        }
+      } catch {
+        // Unreadable record: of no use to anyone, so clear it out.
+        await env.KV.delete(key.name);
+      }
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  return revoked;
+}
+
 /** Loads the current session (if any) without requiring one to exist. */
 export async function loadSession(c: Context<AppBindings>): Promise<AdminSessionRecord | null> {
   const cookieValue = getCookie(c, SESSION_COOKIE);
