@@ -64,3 +64,38 @@ export async function getShippingConfig(env: Env): Promise<ShippingConfig> {
     freeThresholdPence: Number.isFinite(free) ? free : 0,
   };
 }
+
+/**
+ * The business details a distance seller has to publish.
+ *
+ * Deliberately separate from `store.address`, which is the Parcel2Go
+ * collection address: that is where the courier knocks, it is the owner's
+ * home, and it was entered for the courier, not for publication. Publishing it
+ * is the owner's decision to make, not a default, so these fields start empty
+ * and the storefront shows only what has been filled in.
+ */
+export interface LegalDetails {
+  tradingName: string;
+  companyName: string;
+  companyNumber: string;
+  registeredAddress: string;
+  vatNumber: string;
+}
+
+export async function getLegalDetails(env: Env): Promise<LegalDetails> {
+  const [tradingName, companyName, companyNumber, registeredAddress, vatNumber] = await Promise.all([
+    getSetting<string>(env, 'legal.trading_name', ''),
+    getSetting<string>(env, 'legal.company_name', ''),
+    getSetting<string>(env, 'legal.company_number', ''),
+    getSetting<string>(env, 'legal.registered_address', ''),
+    getSetting<string>(env, 'legal.vat_number', ''),
+  ]);
+  const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  return {
+    tradingName: text(tradingName) || '27beauty',
+    companyName: text(companyName),
+    companyNumber: text(companyNumber),
+    registeredAddress: text(registeredAddress),
+    vatNumber: text(vatNumber),
+  };
+}

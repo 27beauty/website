@@ -24,7 +24,7 @@ import {
   writeCouponCode,
 } from '../lib/cart';
 import { validateCoupon } from '../lib/coupons';
-import { getShippingConfig } from '../lib/settings';
+import { getLegalDetails, getShippingConfig } from '../lib/settings';
 import { formatPence } from '../lib/money';
 import { clampInt, excerpt, isEmail, normaliseCouponCode, parseJsonArray, supportEmail } from '../lib/util';
 import { createB2bInquiry } from '../lib/b2b';
@@ -1019,8 +1019,41 @@ storefront.get('/qr/:code', async (c) => qrLanding(c, c.req.param('code')));
 
 storefront.get('/pages/:slug', async (c) => {
   const slug = c.req.param('slug');
-  const categories = await listCategories(c.env);
+  const [categories, legal] = await Promise.all([listCategories(c.env), getLegalDetails(c.env)]);
   const email = supportEmail(c.env.SUPPORT_EMAIL);
+
+  /**
+   * The business identity a UK distance seller has to publish. The contact
+   * page used to say "a full postal address is available on request by email",
+   * which is not what the rules ask for — the address has to be given, not
+   * offered. Only what the owner has filled in is shown; the Parcel2Go
+   * collection address is never used here.
+   */
+  const BusinessDetails = () => (
+    <>
+      <h2>Business details</h2>
+      <p>
+        {legal.companyName ? (
+          <>
+            {legal.tradingName} is a trading name of {legal.companyName}
+            {legal.companyNumber ? `, registered in England and Wales, company number ${legal.companyNumber}` : ''}.
+          </>
+        ) : (
+          <>{legal.tradingName}, trading in the United Kingdom.</>
+        )}
+      </p>
+      {legal.registeredAddress ? (
+        <p>
+          {legal.companyName ? 'Registered office: ' : 'Postal address: '}
+          {legal.registeredAddress}
+        </p>
+      ) : null}
+      {legal.vatNumber ? <p>VAT registration number: {legal.vatNumber}</p> : null}
+      <p>
+        Email: <a href={`mailto:${email}`}>{email}</a>
+      </p>
+    </>
+  );
   const layoutFor = (title: string, description: string, body: unknown) =>
     c.html(
       <Layout
@@ -1130,8 +1163,7 @@ storefront.get('/pages/:slug', async (c) => {
             We aim to reply within one working day, Monday to Friday. During particularly busy periods (such as
             the run-up to Christmas) this may occasionally be a little longer.
           </p>
-          <h2>Business address</h2>
-          <p>27beauty, United Kingdom. A full postal address is available on request by email.</p>
+          <BusinessDetails />
           <h2>Buying for a business?</h2>
           <p>
             See our <a href="/b2b">trade &amp; wholesale</a> page for stocking your shop, salon or
@@ -1173,6 +1205,7 @@ storefront.get('/pages/:slug', async (c) => {
           </p>
           <h2>Governing law</h2>
           <p>These terms are governed by the law of England and Wales.</p>
+          <BusinessDetails />
         </>,
       );
 

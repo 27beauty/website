@@ -120,6 +120,64 @@ settings.get('/', async (c) => {
           </textarea>
         </div>
 
+        <h3>Legal &amp; business details</h3>
+        <p class="field-hint">
+          These appear on your public Contact and Terms pages. Selling online to UK consumers, you have to
+          show a trading name and a geographic postal address, plus your company number and registered
+          office if you trade as a limited company, and your VAT number if you are registered. Anything you
+          leave blank is simply not shown. This is <strong>not</strong> the collection address above — that
+          one is only given to the courier.
+        </p>
+        <div class="admin-grid cols-2">
+          <div class="field">
+            <label for="legal_trading_name">Trading name</label>
+            <input
+              id="legal_trading_name"
+              name="legal_trading_name"
+              type="text"
+              value={String(s['legal.trading_name'] ?? '')}
+              placeholder="27beauty"
+            />
+          </div>
+          <div class="field">
+            <label for="legal_company_name">Registered company name</label>
+            <input
+              id="legal_company_name"
+              name="legal_company_name"
+              type="text"
+              value={String(s['legal.company_name'] ?? '')}
+              placeholder="27Beauty Ltd"
+            />
+          </div>
+          <div class="field">
+            <label for="legal_company_number">Company number</label>
+            <input
+              id="legal_company_number"
+              name="legal_company_number"
+              type="text"
+              value={String(s['legal.company_number'] ?? '')}
+              placeholder="12345678"
+            />
+          </div>
+          <div class="field">
+            <label for="legal_vat_number">VAT number</label>
+            <input
+              id="legal_vat_number"
+              name="legal_vat_number"
+              type="text"
+              value={String(s['legal.vat_number'] ?? '')}
+              placeholder="Leave blank if not registered"
+            />
+          </div>
+        </div>
+        <div class="field">
+          <label for="legal_registered_address">Public postal address</label>
+          <textarea id="legal_registered_address" name="legal_registered_address" rows={2}>
+            {String(s['legal.registered_address'] ?? '')}
+          </textarea>
+          <p class="field-hint">Shown publicly. Use a registered office or business address if you have one.</p>
+        </div>
+
         <h3>Shipping &amp; checkout</h3>
         <div class="admin-grid cols-3">
           <div class="field">
@@ -479,6 +537,11 @@ settings.post('/', async (c) => {
     setSetting(c.env, 'store.email', str(body.store_email)),
     setSetting(c.env, 'store.phone', str(body.store_phone)),
     setSetting(c.env, 'store.address', str(body.store_address)),
+    setSetting(c.env, 'legal.trading_name', str(body.legal_trading_name)),
+    setSetting(c.env, 'legal.company_name', str(body.legal_company_name)),
+    setSetting(c.env, 'legal.company_number', str(body.legal_company_number)),
+    setSetting(c.env, 'legal.registered_address', str(body.legal_registered_address)),
+    setSetting(c.env, 'legal.vat_number', str(body.legal_vat_number)),
     setSetting(c.env, 'shipping.flat_pence', Math.round(asNumber(body.shipping_flat, 3.49) * 100)),
     setSetting(c.env, 'shipping.free_threshold_pence', Math.round(asNumber(body.shipping_free, 0) * 100)),
     setSetting(c.env, 'checkout.enabled', body.checkout_enabled === '1'),

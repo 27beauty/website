@@ -726,3 +726,63 @@ describe('SF-01b: the confirmation page always names an address to write to', ()
     expect(html).not.toContain('email  and');
   });
 });
+
+describe('SF-02: the shop publishes who it is', () => {
+  /**
+   * The contact page said "27beauty, United Kingdom. A full postal address is
+   * available on request by email." A UK distance seller has to give the
+   * address, not offer it. The one address the shop already held is
+   * `store.address` — the Parcel2Go collection address, the owner's home,
+   * entered for the courier — so these are separate fields the owner fills in
+   * knowingly, and nothing is published until they do.
+   */
+  const page = async (slug: string) =>
+    (await worker.fetch(new Request(`https://27beauty.co.uk/pages/${slug}`), env, ctx())).text();
+
+  const setLegal = (rows: Record<string, string>) => {
+    for (const [k, v] of Object.entries(rows)) {
+      sql.exec(`INSERT INTO settings (key, value) VALUES ('${k}', '${JSON.stringify(v)}')`);
+    }
+  };
+
+  it('no longer claims the address is available on request', async () => {
+    expect(await page('contact')).not.toContain('available on request');
+  });
+
+  it('never publishes the courier collection address', async () => {
+    setLegal({ 'store.address': '4 Example Close, Blackburn, BB2 6AL' });
+    const html = await page('contact');
+    expect(html).not.toContain('Example Close');
+  });
+
+  it('shows the registered company, number and public address once set', async () => {
+    setLegal({
+      'legal.company_name': '27Beauty Ltd',
+      'legal.company_number': '12345678',
+      'legal.registered_address': '1 Registered Way, Blackburn, BB1 1AA',
+      'legal.vat_number': 'GB123456789',
+    });
+    const html = await page('contact');
+    expect(html).toContain('27Beauty Ltd');
+    expect(html).toContain('company number 12345678');
+    expect(html).toContain('1 Registered Way');
+    expect(html).toContain('GB123456789');
+  });
+
+  it('puts the same details on the terms page, which is the contract', async () => {
+    setLegal({ 'legal.company_name': '27Beauty Ltd', 'legal.company_number': '12345678' });
+    expect(await page('terms')).toContain('company number 12345678');
+  });
+
+  it('degrades to a bare trading name rather than inventing anything', async () => {
+    const html = await page('contact');
+    expect(html).toContain('27beauty, trading in the United Kingdom');
+    expect(html).not.toContain('registered in England and Wales');
+    expect(html).not.toContain('VAT registration number');
+  });
+
+  it('leaves VAT out entirely when the shop is not registered', async () => {
+    setLegal({ 'legal.company_name': '27Beauty Ltd' });
+    expect(await page('contact')).not.toContain('VAT registration number');
+  });
+});
