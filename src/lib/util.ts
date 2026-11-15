@@ -153,3 +153,21 @@ export function listQueryString(
   }
   return params.toString();
 }
+
+/**
+ * A cell a spreadsheet will treat as text, never as a formula.
+ *
+ * Excel and Sheets execute any cell beginning with = + - @ tab or carriage
+ * return. Product titles and customer names in these exports come from eBay,
+ * Amazon and whatever a shopper typed, so they are not the shop's to trust:
+ * opening an export should never run anything.
+ *
+ * A plain number is left exactly as it is, so prices and counts still add up
+ * rather than arriving as text. Only for exports a person opens — the
+ * Parcel2Go upload is machine-read and must stay byte for byte what the
+ * courier expects.
+ */
+export function csvSafeCell(value: string): string {
+  if (/^-?\d+(\.\d+)?$/.test(value)) return value;
+  return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+}

@@ -78,7 +78,12 @@ admin.get('/', async (c) => {
     ).first<{ to_book: number; booked_today: number; errored: number }>(),
     getSetting<boolean>(c.env, 'parcel2go.enabled', false),
     c.env.DB.prepare("SELECT COUNT(*) AS n FROM b2b_inquiries WHERE status = 'new'").first<{ n: number }>(),
-    c.env.DB.prepare("SELECT COUNT(*) AS n FROM channel_listings WHERE status = 'review'").first<{ n: number }>(),
+    // Must match listingsToReview, which leaves FBA out — Amazon ships those
+    // and linking one decides nothing. Counting them here sent the owner to a
+    // screen holding roughly half what the badge promised.
+    c.env.DB
+      .prepare("SELECT COUNT(*) AS n FROM channel_listings WHERE status = 'review' AND fulfilment = 'merchant'")
+      .first<{ n: number }>(),
   ]);
   const [drafts, failedListings] = await Promise.all([countDraftProducts(c.env), countFailedListings(c.env)]);
   const toReview = reviewRow?.n ?? 0;

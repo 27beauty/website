@@ -4,7 +4,7 @@ import { countDraftProducts, getProductById, listCategories, listProductChoices 
 import { getAdmin, verifyCsrf } from '../../lib/admin-auth';
 import { AdminLayout, CsrfField, Guide } from '../../ui/admin-layout';
 import { formatPence, penceToInput } from '../../lib/money';
-import { clampInt, inChunks, listQueryString, parseJsonArray, poundsToPence, uniqueSlug } from '../../lib/util';
+import { clampInt, csvSafeCell, inChunks, listQueryString, parseJsonArray, poundsToPence, uniqueSlug } from '../../lib/util';
 import { randomToken } from '../../lib/crypto';
 import { basketCouponCode, couponQrUrl, formatCouponCode, productCouponCode, renderQrSvg } from '../../lib/qr';
 import { getSetting } from '../../lib/settings';
@@ -2028,7 +2028,10 @@ export function parseCsv(input: string): string[][] {
   return rows.filter((r) => !(r.length === 1 && r[0] === ''));
 }
 
-function csvField(value: string): string {
+function csvField(raw: string): string {
+  // Titles and brands come from eBay and Amazon, so the export must not run
+  // as a formula when the owner opens it in a spreadsheet.
+  const value = csvSafeCell(raw);
   if (/[",\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
   return value;
 }

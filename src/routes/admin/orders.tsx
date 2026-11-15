@@ -12,7 +12,7 @@ import {
   type SmartSendScope,
 } from '../../lib/smartsend';
 import { formatPence } from '../../lib/money';
-import { clampInt, inChunks, listQueryString } from '../../lib/util';
+import { clampInt, csvSafeCell, inChunks, listQueryString } from '../../lib/util';
 import { getOrderWithItems, restockCancelledOrder, type OrderWithItems } from '../../lib/orders';
 import { pushSoon } from '../../lib/channels';
 import { getSetting } from '../../lib/settings';
@@ -611,7 +611,9 @@ orders.post('/export-baskets', async (c) => {
   }
   results.sort((a, b) => b.created_at.localeCompare(a.created_at));
 
-  const csvEscape = (v: string) => `"${v.replace(/"/g, '""')}"`;
+  // Names, emails and order notes are whatever a shopper or a marketplace
+  // typed, so the export must not run as a formula when it is opened.
+  const csvEscape = (v: string) => `"${csvSafeCell(v).replace(/"/g, '""')}"`;
   const rows = [
     ['Order', 'Email', 'Name', 'Phone', 'Total', 'Status', 'Date', 'Resume link'],
     ...(results ?? []).map((r) => [

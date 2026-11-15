@@ -500,3 +500,39 @@ describe('S2: changing the password signs other devices out', () => {
     expect(await env.KV.get('admin:session:stolen')).toBeNull();
   });
 });
+
+describe('S4: an export cannot run as a formula when opened', () => {
+  it('neutralises the characters a spreadsheet executes', async () => {
+    const { csvSafeCell } = await import('../src/lib/util');
+    // A marketplace title or a name a shopper typed is not the shop's to trust.
+    expect(csvSafeCell('=HYPERLINK("http://evil","click")')).toBe("'=HYPERLINK(\"http://evil\",\"click\")");
+    expect(csvSafeCell('+1-555-0100')).toBe("'+1-555-0100");
+    expect(csvSafeCell('@SUM(A1:A9)')).toBe("'@SUM(A1:A9)");
+    expect(csvSafeCell('-2 Pack Lipstick')).toBe("'-2 Pack Lipstick");
+  });
+
+  it('leaves ordinary text and real numbers alone, so the sheet still adds up', async () => {
+    const { csvSafeCell } = await import('../src/lib/util');
+    expect(csvSafeCell('Maybelline Fit Me Powder')).toBe('Maybelline Fit Me Powder');
+    expect(csvSafeCell('12')).toBe('12');
+    expect(csvSafeCell('9.99')).toBe('9.99');
+    expect(csvSafeCell('-5')).toBe('-5'); // a negative number is data, not a formula
+    expect(csvSafeCell('')).toBe('');
+  });
+
+  it('is applied by the product export', async () => {
+    const { toCsvRow } = await import('../src/routes/admin/products');
+    expect(toCsvRow(['=cmd()', 'Normal', 10])).toBe("'=cmd(),Normal,10");
+  });
+});
+
+describe('S4: the courier upload is deliberately left alone', () => {
+  it('passes Parcel2Go the exact field, with no apostrophe added', async () => {
+    const { toCsv } = await import('../src/lib/smartsend');
+    // This file is machine-read by Parcel2Go, not opened in a spreadsheet.
+    // Prefixing it to be "safe" would corrupt an address line beginning with
+    // a dash and the upload would be wrong, so the formula guard must not be
+    // applied here.
+    expect(toCsv([['-Flat 2, The Mews', 'Normal']])).toBe('"-Flat 2, The Mews","Normal"\r\n');
+  });
+});
