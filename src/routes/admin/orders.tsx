@@ -1063,11 +1063,20 @@ orders.post('/:id/fulfil', async (c) => {
   }
   const tracking = typeof body.tracking_number === 'string' ? body.tracking_number.trim() : '';
   const carrier = typeof body.carrier === 'string' ? body.carrier.trim() : '';
-  await c.env.DB.prepare(
-    "UPDATE orders SET status = 'fulfilled', tracking_number = ?, carrier = ?, updated_at = datetime('now') WHERE id = ?",
+  // Only a paid order can be sent. Without this an order that was never paid
+  // for, or one already cancelled or refunded, could be marked fulfilled from
+  // a stale tab or a double submit — and the shop would post the goods.
+  const r = await c.env.DB.prepare(
+    "UPDATE orders SET status = 'fulfilled', tracking_number = ?, carrier = ?, updated_at = datetime('now') WHERE id = ? AND status = 'paid'",
   )
     .bind(tracking || null, carrier || null, id)
     .run();
+  if (!r.meta.changes) {
+    return c.redirect(
+      `/admin/orders/${id}?err=` + encodeURIComponent('Only a paid order can be marked fulfilled — reload to see where this one is up to.'),
+      303,
+    );
+  }
   return c.redirect(`/admin/orders/${id}?msg=${encodeURIComponent('Order marked fulfilled.')}`, 303);
 });
 
@@ -1077,9 +1086,20 @@ orders.post('/:id/refund', async (c) => {
   if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
     return c.redirect(`/admin/orders/${id}?err=` + encodeURIComponent('Your session expired — please try again.'), 303);
   }
-  await c.env.DB.prepare("UPDATE orders SET status = 'refunded', updated_at = datetime('now') WHERE id = ?")
+  // Only money that was taken can be given back, so only a paid or fulfilled
+  // order can be refunded. This records a refund made in Stripe; it does not
+  // issue one.
+  const r = await c.env.DB.prepare(
+    "UPDATE orders SET status = 'refunded', updated_at = datetime('now') WHERE id = ? AND status IN ('paid', 'fulfilled')",
+  )
     .bind(id)
     .run();
+  if (!r.meta.changes) {
+    return c.redirect(
+      `/admin/orders/${id}?err=` + encodeURIComponent('Only a paid or fulfilled order can be refunded — reload to see where this one is up to.'),
+      303,
+    );
+  }
   return c.redirect(`/admin/orders/${id}?msg=${encodeURIComponent('Order marked refunded.')}`, 303);
 });
 

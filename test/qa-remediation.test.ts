@@ -1,0 +1,120 @@
+/**
+ * Fixes for findings carried over from an external QA report, each verified
+ * against this codebase before being written. The defects were real here.
+ */
+
+import { beforeEach, describe, expect, it } from 'vitest';
+import type { Env } from '../src/types';
+import worker from '../src/index';
+import { createTestD1, createTestKV } from './helpers/d1';
+import { applicableStockEdits, requestedStockEdits } from '../src/routes/admin/products';
+
+let env: Env;
+let sql: ReturnType<typeof createTestD1>;
+
+/** Workers hand the fetch handler an ExecutionContext; the routes only waitUntil. */
+const ctx = () => ({ waitUntil: () => {}, passThroughOnException: () => {} }) as unknown as ExecutionContext;
+
+beforeEach(() => {
+  sql = createTestD1();
+  env = { DB: sql.db, KV: createTestKV(), SESSION_SECRET: 'test-session-secret-0123456789abcdef' } as unknown as Env;
+});
+
+describe('S1: uploaded images are never served as live documents', () => {
+  // image/svg+xml is an accepted upload type, and /admin/media is public. The
+  // old handler streamed R2 bytes with no sandbox and no nosniff, so a script
+  // inside an uploaded SVG ran on the shop's own origin — where the admin
+  // session cookie lives. It also skipped the edge cache, making every hit a
+  // billable R2 read.
+  it('redirects the legacy /admin/media path to the locked-down canonical one', async () => {
+    const res = await worker.fetch(new Request('https://27beauty.co.uk/admin/media/products/abc123.svg'), env, ctx());
+    expect(res.status).toBe(301);
+    expect(res.headers.get('location')).toBe('/media/products/abc123.svg');
+  });
+
+  it('keeps the key exactly as given, so existing links still resolve', async () => {
+    const res = await worker.fetch(new Request('https://27beauty.co.uk/admin/media/a%20b/c%2Bd.png?v=2'), env, ctx());
+    expect(res.headers.get('location')).toBe('/media/a%20b/c%2Bd.png?v=2');
+  });
+});
+
+describe('ADM-01: an order can only move to a state that makes sense', () => {
+  const order = (id: number, status: string) =>
+    sql.exec(`INSERT INTO orders (id, order_number, status, total_pence) VALUES (${id}, 'T-${id}', '${status}', 1000)`);
+  const statusOf = (id: number) =>
+    (sql.all(`SELECT status FROM orders WHERE id = ${id}`)[0] as { status: string }).status;
+
+  it('will not mark an unpaid order fulfilled', () => {
+    order(1, 'pending');
+    sql.exec(`UPDATE orders SET status = 'fulfilled' WHERE id = 1 AND status = 'paid'`);
+    expect(statusOf(1)).toBe('pending');
+  });
+
+  it('will not refund an order that was never paid', () => {
+    order(2, 'cancelled');
+    sql.exec(`UPDATE orders SET status = 'refunded' WHERE id = 2 AND status IN ('paid','fulfilled')`);
+    expect(statusOf(2)).toBe('cancelled');
+  });
+
+  it('still allows the real transitions', () => {
+    order(3, 'paid');
+    sql.exec(`UPDATE orders SET status = 'fulfilled' WHERE id = 3 AND status = 'paid'`);
+    expect(statusOf(3)).toBe('fulfilled');
+    sql.exec(`UPDATE orders SET status = 'refunded' WHERE id = 3 AND status IN ('paid','fulfilled')`);
+    expect(statusOf(3)).toBe('refunded');
+  });
+});
+
+describe('ADM-02: saving the stock list cannot put sold units back', () => {
+  const plan = (body: Record<string, unknown>, current: Record<number, number>) =>
+    applicableStockEdits(requestedStockEdits(body), new Map(Object.entries(current).map(([k, v]) => [Number(k), v])));
+
+  it('writes nothing when the owner changed nothing', () => {
+    // The page submits all 100 rows whether or not they were touched. This is
+    // the bug: pressing Save on an untouched page rewrote every one of them.
+    const body = { stock_1: '5', base_1: '5', stock_2: '0', base_2: '0' };
+    expect(plan(body, { 1: 5, 2: 0 })).toEqual({ updates: [], stale: 0 });
+  });
+
+  it('leaves a row alone when it sold while the page was open', () => {
+    // Drawn at 5, one sold (now 4), owner saves without touching it. Writing
+    // the submitted 5 back would put the sold unit on sale again.
+    const body = { stock_1: '5', base_1: '5' };
+    expect(plan(body, { 1: 4 })).toEqual({ updates: [], stale: 0 });
+  });
+
+  it('refuses an edit decided against a figure that has since moved', () => {
+    // Drawn at 5, owner types 8, but it sold down to 4 meanwhile. Their 8 was
+    // "5 plus 3", so applying it now would overstate by the unit sold.
+    const body = { stock_1: '8', base_1: '5' };
+    expect(plan(body, { 1: 4 })).toEqual({ updates: [], stale: 1 });
+  });
+
+  it('applies a real edit when nothing moved underneath it', () => {
+    const body = { stock_1: '12', base_1: '5' };
+    expect(plan(body, { 1: 5 })).toEqual({ updates: [{ productId: 1, quantity: 12 }], stale: 0 });
+  });
+
+  it('applies only the rows that changed, out of a page full of them', () => {
+    const body = {
+      stock_1: '5', base_1: '5',
+      stock_2: '9', base_2: '3',
+      stock_3: '7', base_3: '7',
+    };
+    expect(plan(body, { 1: 5, 2: 3, 3: 7 })).toEqual({ updates: [{ productId: 2, quantity: 9 }], stale: 0 });
+  });
+
+  it('takes a request with no baseline at face value, rather than ignoring the owner', () => {
+    const body = { stock_1: '6' };
+    expect(plan(body, { 1: 5 })).toEqual({ updates: [{ productId: 1, quantity: 6 }], stale: 0 });
+  });
+
+  it('never writes a negative count, and floors a fractional one', () => {
+    expect(plan({ stock_1: '-4', base_1: '5' }, { 1: 5 }).updates).toEqual([{ productId: 1, quantity: 0 }]);
+    expect(plan({ stock_1: '3.9', base_1: '5' }, { 1: 5 }).updates).toEqual([{ productId: 1, quantity: 3 }]);
+  });
+
+  it('skips a product that has gone since the page was drawn', () => {
+    expect(plan({ stock_9: '4', base_9: '5' }, {})).toEqual({ updates: [], stale: 0 });
+  });
+});

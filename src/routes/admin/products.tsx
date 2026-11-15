@@ -480,6 +480,11 @@ products.get('/', async (c) => {
                 <td class="faint col-optional">{p.category_name ?? '—'}</td>
                 <td class="num">{formatPence(p.price_pence)}</td>
                 <td class="num">
+                  {/* What this row showed when the page was drawn. The save
+                      compares against it, so an untouched row is never
+                      rewritten and a tab left open cannot put back units that
+                      have since sold. */}
+                  <input type="hidden" name={`base_${p.id}`} value={p.stock} form="bulk-stock-form" />
                   <input
                     type="number"
                     name={`stock_${p.id}`}
@@ -549,25 +554,96 @@ products.get('/', async (c) => {
   );
 });
 
+/**
+ * Which rows of the bulk stock form are real edits.
+ *
+ * Every row on the page is submitted, not only the ones touched, so the form
+ * carries `base_<id>`: the figure each row was drawn with. A row still equal
+ * to its baseline is not an edit. Writing them all back was restoring units
+ * that had sold while the page sat open.
+ *
+ * A row with no baseline (an older page, or a request made by hand) is taken
+ * at face value rather than silently ignored.
+ */
+export function requestedStockEdits(body: Record<string, unknown>): Map<number, { quantity: number; base: number }> {
+  const wanted = new Map<number, { quantity: number; base: number }>();
+  for (const [key, value] of Object.entries(body)) {
+    const m = /^stock_(\d+)$/.exec(key);
+    if (!m || typeof value !== 'string') continue;
+    const n = parseInt(value, 10);
+    if (!Number.isFinite(n)) continue;
+    const id = Number(m[1]);
+    const raw = body[`base_${id}`];
+    const base = typeof raw === 'string' ? parseInt(raw, 10) : NaN;
+    const quantity = Math.max(0, Math.trunc(n));
+    if (!Number.isFinite(base) || base !== quantity) wanted.set(id, { quantity, base });
+  }
+  return wanted;
+}
+
+/**
+ * Compare and set: an edit only applies while the count is still what the
+ * owner was looking at. If it moved — a sale, the marketplace sync — their
+ * number was decided against a figure that no longer holds, so it is skipped
+ * and reported rather than overwriting the newer truth.
+ */
+export function applicableStockEdits(
+  wanted: Map<number, { quantity: number; base: number }>,
+  current: Map<number, number>,
+): { updates: { productId: number; quantity: number }[]; stale: number } {
+  const updates: { productId: number; quantity: number }[] = [];
+  let stale = 0;
+  for (const [id, w] of wanted) {
+    const now = current.get(id);
+    if (now === undefined) continue;
+    if (Number.isFinite(w.base) && now !== w.base) {
+      stale++;
+      continue;
+    }
+    updates.push({ productId: id, quantity: w.quantity });
+  }
+  return { updates, stale };
+}
+
 products.post('/bulk-stock', async (c) => {
   const body = await c.req.parseBody();
   const back = typeof body.back === 'string' && body.back ? body.back : '/admin/products';
   if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
     return c.redirect(redirectWith(back, { err: 'Your session expired — please try again.' }), 303);
   }
-  const updates: { productId: number; quantity: number }[] = [];
-  for (const [key, value] of Object.entries(body)) {
-    const m = /^stock_(\d+)$/.exec(key);
-    if (!m || typeof value !== 'string') continue;
-    const n = parseInt(value, 10);
-    if (!Number.isFinite(n)) continue;
-    updates.push({ productId: Number(m[1]), quantity: Math.max(0, Math.trunc(n)) });
+  // Every row on the page is submitted, not just the ones touched, so the
+  // form also carries the figure each row was drawn with. Rows equal to their
+  // baseline are not edits and are dropped here; the rest are checked against
+  // the database below. Writing all of them back was restoring units that had
+  // sold since the page was opened.
+  const wanted = requestedStockEdits(body);
+  const current = new Map<number, number>();
+  if (wanted.size) {
+    for (const slice of inChunks([...wanted.keys()])) {
+      const { results } = await c.env.DB.prepare(
+        `SELECT id, stock FROM products WHERE id IN (${slice.map(() => '?').join(',')})`,
+      )
+        .bind(...slice)
+        .all<{ id: number; stock: number }>();
+      for (const row of results ?? []) current.set(row.id, row.stock);
+    }
   }
+  const { updates, stale } = applicableStockEdits(wanted, current);
+
   // Through the stock ledger, then out to every linked eBay/Amazon listing.
-  const moved = await setStock(c.env, updates, 'admin', 'Products list');
+  const moved = updates.length ? await setStock(c.env, updates, 'admin', 'Products list') : [];
   pushSoon(c.env, c.executionCtx, moved);
   const count = moved.length;
-  return c.redirect(redirectWith(back, { msg: `Updated stock for ${count} product${count === 1 ? '' : 's'}.` }), 303);
+  const msg = `Updated stock for ${count} product${count === 1 ? '' : 's'}.`;
+  if (stale) {
+    return c.redirect(
+      redirectWith(back, {
+        err: `${msg} ${stale} ${stale === 1 ? 'product' : 'products'} changed while this page was open and ${stale === 1 ? 'was' : 'were'} left alone — reload and check ${stale === 1 ? 'it' : 'them'}.`,
+      }),
+      303,
+    );
+  }
+  return c.redirect(redirectWith(back, { msg }), 303);
 });
 
 /* ---------------------------------------------------------------------- */
