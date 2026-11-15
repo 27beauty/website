@@ -739,11 +739,18 @@ async function renderCartPage(c: Context<AppBindings>, notice?: { message: strin
                   Apply
                 </button>
               </form>
-              {cart.coupon ? (
+              {/* Also shown when a saved code has stopped working. Checkout
+                  refuses to go on while one is in the basket, and the code
+                  lives in a cookie, so without this the customer was sent
+                  back here with an error, no coupon on screen and no way to
+                  clear it — a loop they could only escape by guessing that
+                  Apply on an empty box removes it. */}
+              {cart.coupon || cart.couponError ? (
                 <form method="post" action="/cart/coupon" class="field">
                   <input type="hidden" name="remove" value="1" />
+                  {cart.couponError ? <p class="field-hint">{cart.couponError}</p> : null}
                   <button class="btn btn-secondary btn-sm" type="submit">
-                    Remove coupon
+                    {cart.couponError ? 'Remove code and continue without the discount' : 'Remove coupon'}
                   </button>
                 </form>
               ) : null}

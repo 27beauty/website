@@ -118,3 +118,57 @@ describe('ADM-02: saving the stock list cannot put sold units back', () => {
     expect(plan({ stock_9: '4', base_9: '5' }, {})).toEqual({ updates: [], stale: 0 });
   });
 });
+
+describe('QR-02: a saved code that stops working must not trap the basket', () => {
+  /** Carry Set-Cookie from one request to the next, as a browser would. */
+  const jar: string[] = [];
+  const cookieHeader = () => jar.map((c) => c.split(';')[0]).join('; ');
+  const keep = (res: Response) => {
+    for (const c of res.headers.getSetCookie?.() ?? []) jar.push(c);
+    return res;
+  };
+  const go = async (path: string, init: RequestInit = {}) => {
+    const res = await worker.fetch(
+      new Request(`https://27beauty.co.uk${path}`, {
+        ...init,
+        headers: { ...(init.headers ?? {}), cookie: cookieHeader() },
+      }),
+      env,
+      ctx(),
+    );
+    return keep(res);
+  };
+
+  beforeEach(() => {
+    jar.length = 0;
+    sql.exec(`
+      INSERT INTO categories (id, slug, name, sort_order) VALUES (1, 'make-up', 'Make up', 10);
+      INSERT INTO products (id, slug, title, price_pence, stock, status, category_id)
+        VALUES (1, 'lippy', 'A Lipstick', 1000, 5, 'active', 1);
+      INSERT INTO coupons (id, code, kind, value, active) VALUES (1, 'QR10', 'percent', 10, 1);
+    `);
+  });
+
+  it('offers a way out once the code has been withdrawn', async () => {
+    const form = (o: Record<string, string>) => ({
+      method: 'POST',
+      body: new URLSearchParams(o).toString(),
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    });
+    await go('/cart/add', form({ product_id: '1', quantity: '1' }));
+    await go('/cart/coupon', form({ code: 'QR10' }));
+
+    // Applied and discounting, as a scanned card would be.
+    const withCoupon = await (await go('/cart')).text();
+    expect(withCoupon).toContain('Remove coupon');
+
+    // The owner withdraws the offer while the basket is still open.
+    sql.exec(`UPDATE coupons SET active = 0 WHERE id = 1`);
+
+    const stuck = await (await go('/cart')).text();
+    // Checkout refuses while a bad code is saved, so the basket has to offer
+    // a way to clear it — otherwise the customer is bounced back here for
+    // ever with nothing on screen to act on.
+    expect(stuck).toContain('Remove code and continue without the discount');
+  });
+});

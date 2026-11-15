@@ -124,5 +124,15 @@ export function renderQrSvg(content: string, size = 240): string {
     background: '#ffffff',
     ecl: 'Q',
   });
-  return qr.svg();
+  // qrcode-svg emits width/height but no viewBox. The print stylesheet sizes
+  // these to 30mm on a card and 60mm on a poster, and Chromium scales them
+  // correctly either way — rendering at 30mm was measured pixel-identical
+  // with and without this, and the same measurement did catch a deliberately
+  // wrong viewBox, so it was not a blind test. The viewBox is here to make
+  // the scaling explicit rather than rely on how a renderer treats a missing
+  // one, since these go through print and PDF pipelines that are not
+  // Chromium. It is not a fix for a defect; nothing was mis-rendering.
+  return qr
+    .svg()
+    .replace('<svg ', `<svg viewBox="0 0 ${clamped} ${clamped}" preserveAspectRatio="xMidYMid meet" `);
 }
