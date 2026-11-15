@@ -212,8 +212,21 @@ export async function queryProducts(
   return { items: results ?? [], total: countRow?.n ?? 0 };
 }
 
+/**
+ * A product page the public may see, which means an active one only.
+ *
+ * Drafts and archived rows are deliberately not found here. An eBay or Amazon
+ * import lands as a draft with no description and, until the owner prices it,
+ * £0; an archived row is one the shop has stopped selling. Both kept rendering
+ * a normal-looking product page with a price and an Add to basket button that
+ * `/cart/add` then refuses, because the basket filters on status and this did
+ * not. Nothing could be bought — the money path was never open — but the page
+ * was reachable by an old link, a shared URL or a guessed slug, and offered the
+ * shopper something the shop will not sell them. The admin panel reads products
+ * by id, so its own previews are unaffected.
+ */
 export async function getProductBySlug(env: Env, slug: string): Promise<ProductWithCategory | null> {
-  return env.DB.prepare(`${PRODUCT_SELECT} WHERE p.slug = ?`)
+  return env.DB.prepare(`${PRODUCT_SELECT} WHERE p.slug = ? AND p.status = 'active'`)
     .bind(slug)
     .first<ProductWithCategory>();
 }

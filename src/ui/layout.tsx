@@ -130,7 +130,15 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = (props) => {
                 <h4>Help</h4>
                 <ul>
                   <li>
-                    <a href="/pages/delivery">Delivery &amp; returns</a>
+                    <a href="/pages/delivery">Delivery</a>
+                  </li>
+                  {/* Returns has its own page and its own link. One "Delivery &
+                      returns" link pointing at /pages/delivery was the only way
+                      most shoppers reached either, and the delivery page says
+                      nothing about returns, so the cancellation rights a
+                      distance seller has to show were two pages deep. */}
+                  <li>
+                    <a href="/pages/returns">Returns &amp; refunds</a>
                   </li>
                   <li>
                     <a href="/pages/contact">Contact us</a>

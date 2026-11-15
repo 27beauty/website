@@ -536,3 +536,72 @@ describe('S4: the courier upload is deliberately left alone', () => {
     expect(toCsv([['-Flat 2, The Mews', 'Normal']])).toBe('"-Flat 2, The Mews","Normal"\r\n');
   });
 });
+
+describe('QR-04: only an active product has a public page', () => {
+  /**
+   * An import lands as a draft: no description, and £0 until the owner prices
+   * it. Archived means the shop has stopped selling it. Both used to render a
+   * normal product page, because the slug lookup had no status filter, while
+   * `/cart/add` and the basket both check status — so the page offered a price
+   * and an Add to basket button for something that could never be bought.
+   */
+  const insert = (id: number, slug: string, status: string, pence: number) =>
+    sql.exec(
+      `INSERT INTO products (id, title, slug, price_pence, stock, status, category_id)
+       VALUES (${id}, 'Test Item ${id}', '${slug}', ${pence}, 5, '${status}', NULL)`,
+    );
+
+  const get = (slug: string) =>
+    worker.fetch(new Request(`https://27beauty.co.uk/product/${slug}`), env, ctx());
+
+  it('serves an active product', async () => {
+    insert(1, 'live-item', 'active', 1299);
+    expect((await get('live-item')).status).toBe(200);
+  });
+
+  it('404s a draft, rather than showing a £0 page for an unpriced import', async () => {
+    insert(2, 'draft-item', 'draft', 0);
+    expect((await get('draft-item')).status).toBe(404);
+  });
+
+  it('404s an archived product, so an old link stops offering it', async () => {
+    insert(3, 'gone-item', 'archived', 1299);
+    expect((await get('gone-item')).status).toBe(404);
+  });
+
+  it('still 404s a slug that does not exist at all', async () => {
+    expect((await get('never-existed')).status).toBe(404);
+  });
+});
+
+describe('SF-03: the returns policy is reachable', () => {
+  /**
+   * The policy page itself was always there and correct; nothing linked to it
+   * but the Terms page. The footer's one "Delivery & returns" link went to
+   * /pages/delivery, which says nothing about returns, so a shopper looking
+   * for their 14-day cancellation rights could not find them.
+   */
+  const body = async (path: string) =>
+    (await worker.fetch(new Request(`https://27beauty.co.uk${path}`), env, ctx())).text();
+
+  it('links returns from the footer on every page', async () => {
+    expect(await body('/')).toContain('href="/pages/returns"');
+  });
+
+  it('links returns from the delivery page it used to be conflated with', async () => {
+    const html = await body('/pages/delivery');
+    expect(html).toContain('href="/pages/returns"');
+    expect(html).toContain('14 days');
+  });
+
+  it('serves the policy with the statutory right named', async () => {
+    const html = await body('/pages/returns');
+    expect(html).toContain('Consumer Contracts Regulations 2013');
+    expect(html).toContain('14 days');
+  });
+
+  it('no longer promises returns on a page that has none', async () => {
+    // The old footer label. If it comes back, it must point at the real page.
+    expect(await body('/')).not.toContain('>Delivery &amp; returns<');
+  });
+});

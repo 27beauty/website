@@ -583,7 +583,8 @@ storefront.get('/product/:slug', async (c) => {
             ))}
           </ul>
           <p class="small muted">
-            Read our full <a href="/pages/delivery">delivery &amp; returns</a> policy.
+            Read our full <a href="/pages/delivery">delivery</a> and{' '}
+            <a href="/pages/returns">returns</a> policies.
           </p>
         </div>
       </div>
@@ -1048,6 +1049,11 @@ storefront.get('/pages/:slug', async (c) => {
           <p>
             If your order hasn't arrived within 7 working days of dispatch, email us at{' '}
             <a href={`mailto:${email}`}>{email}</a> with your order number and we'll chase it up straight away.
+          </p>
+          <h2>Changed your mind?</h2>
+          <p>
+            You have 14 days from receiving your order to cancel it. Our{' '}
+            <a href="/pages/returns">returns policy</a> explains how, and what happens to your refund.
           </p>
         </>,
       );
