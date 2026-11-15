@@ -255,3 +255,103 @@ describe('SF-04: the shop does not promise messages it cannot send', () => {
     expect(checkout).toMatch(/don't send an automatic email/i);
   });
 });
+
+describe('the money path, end to end through the real webhook', () => {
+  /**
+   * The one journey never exercised in production: a payment that succeeds.
+   * This drives the actual /webhooks/stripe route, including Stripe's real
+   * signature verification, so it proves the shop can complete a sale rather
+   * than asserting the pieces in isolation.
+   */
+  const SECRET = 'whsec_test_secret';
+
+  async function signedPost(payload: unknown) {
+    const body = JSON.stringify(payload);
+    const t = Math.floor(Date.now() / 1000);
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(SECRET),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${t}.${body}`));
+    const v1 = [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, '0')).join('');
+    return worker.fetch(
+      new Request('https://27beauty.co.uk/webhooks/stripe', {
+        method: 'POST',
+        body,
+        headers: { 'stripe-signature': `t=${t},v1=${v1}`, 'content-type': 'application/json' },
+      }),
+      { ...env, STRIPE_WEBHOOK_SECRET: SECRET, STRIPE_SECRET_KEY: 'sk_test_dummy' } as Env,
+      ctx(),
+    );
+  }
+
+  it('turns a paid Stripe session into a paid order, stock off the shelf and the coupon spent', async () => {
+    sql.exec(`
+      INSERT INTO products (id, slug, title, price_pence, stock, status) VALUES (1, 'p', 'A Product', 1000, 5, 'active');
+      INSERT INTO coupons (id, code, kind, value, active) VALUES (1, 'QR10', 'percent', 10, 1);
+    `);
+    const cart = await buildCart(env, [{ id: 1, q: 2 }], 'QR10');
+    expect(cart.discountPence).toBe(200); // 10% of £20.00, in whole pence
+    const order = await createPendingOrder(env, { cart, email: null, name: null });
+    sql.exec(`UPDATE orders SET stripe_session_id = 'cs_live_1' WHERE id = ${order.id}`);
+
+    const res = await signedPost({
+      id: 'evt_1',
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_live_1',
+          object: 'checkout.session',
+          payment_status: 'paid',
+          payment_intent: 'pi_live_1',
+          customer_details: { email: 'buyer@example.com', name: 'A Buyer', phone: null },
+        },
+      },
+    });
+    expect(res.status).toBe(200);
+
+    const row = sql.all(`SELECT status, email, stock_applied FROM orders WHERE id = ${order.id}`)[0] as {
+      status: string;
+      email: string;
+      stock_applied: number;
+    };
+    expect(row.status).toBe('paid');
+    expect(row.email).toBe('buyer@example.com'); // carried off the Stripe session
+    expect(row.stock_applied).toBe(1);
+    expect(sql.all(`SELECT stock FROM products WHERE id = 1`)).toEqual([{ stock: 3 }]);
+    expect(sql.all(`SELECT COUNT(*) AS n FROM coupon_redemptions WHERE order_id = ${order.id}`)).toEqual([{ n: 1 }]);
+  });
+
+  it('refuses an event that is not signed by Stripe', async () => {
+    const res = await worker.fetch(
+      new Request('https://27beauty.co.uk/webhooks/stripe', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'checkout.session.completed', data: { object: { id: 'cs_x', payment_status: 'paid' } } }),
+        headers: { 'stripe-signature': 't=1,v1=deadbeef', 'content-type': 'application/json' },
+      }),
+      { ...env, STRIPE_WEBHOOK_SECRET: SECRET, STRIPE_SECRET_KEY: 'sk_test_dummy' } as Env,
+      ctx(),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('takes the stock once when Stripe retries the same payment', async () => {
+    sql.exec(`
+      INSERT INTO products (id, slug, title, price_pence, stock, status) VALUES (1, 'p', 'A Product', 1000, 5, 'active');
+    `);
+    const cart = await buildCart(env, [{ id: 1, q: 2 }], null);
+    const order = await createPendingOrder(env, { cart, email: null, name: null });
+    sql.exec(`UPDATE orders SET stripe_session_id = 'cs_live_2' WHERE id = ${order.id}`);
+    const event = {
+      id: 'evt_2',
+      type: 'checkout.session.completed',
+      data: { object: { id: 'cs_live_2', object: 'checkout.session', payment_status: 'paid', payment_intent: 'pi_2' } },
+    };
+    await signedPost(event);
+    await signedPost(event);
+    expect(sql.all(`SELECT stock FROM products WHERE id = 1`)).toEqual([{ stock: 3 }]);
+  });
+});
