@@ -182,15 +182,19 @@ async function applyStockForOrder(env: Env, orderId: number): Promise<void> {
   if ((guard.meta.changes ?? 0) === 0) return; // another webhook delivery already applied it
 
   const { results } = await env.DB.prepare(
-    'SELECT id, product_id, quantity FROM order_items WHERE order_id = ? AND product_id IS NOT NULL',
+    `SELECT oi.id, oi.product_id, oi.quantity, oi.title, p.stock
+       FROM order_items oi
+       LEFT JOIN products p ON p.id = oi.product_id
+      WHERE oi.order_id = ? AND oi.product_id IS NOT NULL`,
   )
     .bind(orderId)
-    .all<{ id: number; product_id: number; quantity: number }>();
+    .all<{ id: number; product_id: number; quantity: number; title: string; stock: number | null }>();
+  const items = results ?? [];
 
   // Through the stock ledger so every channel sees the sale (src/lib/stock.ts).
   await adjustStock(
     env,
-    (results ?? []).map((row) => ({
+    items.map((row) => ({
       productId: row.product_id,
       delta: -row.quantity,
       reason: 'website_sale' as const,
@@ -198,6 +202,41 @@ async function applyStockForOrder(env: Env, orderId: number): Promise<void> {
       note: `Website order`,
     })),
   );
+
+  /**
+   * Whether the shop could actually meet this order.
+   *
+   * `products.stock` is written as MAX(0, stock + delta), so a decrement that
+   * runs out of stock succeeds quietly: two shoppers paying for the last unit
+   * are both told their order is confirmed, the second one's decrement clamps
+   * at zero, and nothing records it. The owner ships one parcel and the other
+   * customer waits for one that was never possible — which they only find out
+   * by chasing. Checkout does check availability, but that is before the
+   * shopper goes to Stripe, and nothing holds the unit while they pay.
+   *
+   * Reserving stock at checkout is the other way to solve it, and a much
+   * larger change: a reservation that fails to expire hides stock that is
+   * really on the shelf, which is its own lost sales. This records the
+   * shortfall instead, so the owner sees it on the Orders screen the moment
+   * it happens and can refund or restock. The read is from immediately before
+   * the decrement, so a sale landing in between could cost a flag; it can
+   * never raise a false one.
+   */
+  const short = items.filter((row) => (row.stock ?? 0) < row.quantity);
+  if (short.length) {
+    const detail = short
+      .map((row) => `${row.title} (ordered ${row.quantity}, had ${row.stock ?? 0})`)
+      .join('; ');
+    await env.DB.prepare(
+      `UPDATE orders
+          SET oversold = 1,
+              notes = COALESCE(notes || char(10), '') || ?,
+              updated_at = datetime('now')
+        WHERE id = ?`,
+    )
+      .bind(`Not enough stock to fill this order: ${detail}.`, orderId)
+      .run();
+  }
 }
 
 /** Puts a cancelled website order's items back, once per order line. */

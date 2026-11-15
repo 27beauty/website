@@ -175,6 +175,8 @@ export interface Order {
   carrier: string | null;
   notes: string | null;
   stock_applied: number;
+  /** 1 when settlement could not take the full quantity from stock. */
+  oversold?: number;
   parcel2go_order_id: string | null;
   /** When this order was last put in a Smart Send spreadsheet download. */
   smartsend_downloaded_at?: string | null;

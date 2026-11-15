@@ -786,3 +786,92 @@ describe('SF-02: the shop publishes who it is', () => {
     expect(await page('contact')).not.toContain('VAT registration number');
   });
 });
+
+describe('PAY-01: an order the shop cannot fill is flagged, not shipped blind', () => {
+  /**
+   * Stock is taken at settlement and written as MAX(0, stock + delta), so a
+   * decrement that runs out succeeds quietly. Two shoppers paying for the last
+   * unit are both confirmed; the second clamps at zero and nothing says so.
+   * The owner ships one parcel and the other customer waits for one that was
+   * never possible.
+   */
+  const order = (id: number, session: string) => {
+    sql.exec(
+      `INSERT INTO orders (id, order_number, status, subtotal_pence, discount_pence, shipping_pence,
+         total_pence, currency, stripe_session_id)
+       VALUES (${id}, '27B-OS${id}', 'pending', 1000, 0, 0, 1000, 'GBP', '${session}')`,
+    );
+  };
+  const item = (orderId: number, productId: number, qty: number) => {
+    sql.exec(
+      `INSERT INTO order_items (order_id, product_id, title, quantity, unit_price_pence, line_total_pence)
+       VALUES (${orderId}, ${productId}, 'Last Lipstick', ${qty}, 1000, ${qty * 1000})`,
+    );
+  };
+  const product = (id: number, stock: number) => {
+    sql.exec(
+      `INSERT INTO products (id, title, slug, price_pence, stock, status, category_id)
+       VALUES (${id}, 'Last Lipstick', 'last-lipstick-${id}', 1000, ${stock}, 'active', NULL)`,
+    );
+  };
+  const row = (id: number) =>
+    sql.all(`SELECT oversold, notes FROM orders WHERE id = ${id}`)[0] as {
+      oversold: number;
+      notes: string | null;
+    };
+
+  it('does not flag an order it can fill', async () => {
+    product(60, 5);
+    order(60, 'cs_ok');
+    item(60, 60, 2);
+    await markOrderPaid(env, { sessionId: 'cs_ok' });
+    expect(row(60).oversold).toBe(0);
+    expect(sql.all('SELECT stock FROM products WHERE id = 60')[0]).toMatchObject({ stock: 3 });
+  });
+
+  it('flags the second shopper to pay for the last unit', async () => {
+    product(61, 1);
+    order(61, 'cs_first');
+    item(61, 61, 1);
+    order(62, 'cs_second');
+    item(62, 61, 1);
+
+    await markOrderPaid(env, { sessionId: 'cs_first' });
+    await markOrderPaid(env, { sessionId: 'cs_second' });
+
+    expect(row(61).oversold).toBe(0);
+    expect(row(62).oversold).toBe(1);
+    // Stock still clamps at zero — it must never go negative.
+    expect(sql.all('SELECT stock FROM products WHERE id = 61')[0]).toMatchObject({ stock: 0 });
+  });
+
+  it('says in the notes what was short and by how much', async () => {
+    product(63, 1);
+    order(63, 'cs_short');
+    item(63, 63, 4);
+    await markOrderPaid(env, { sessionId: 'cs_short' });
+    const { oversold, notes } = row(63);
+    expect(oversold).toBe(1);
+    expect(notes).toContain('ordered 4, had 1');
+  });
+
+  it('still records the sale in the ledger, so the count is not lost', async () => {
+    product(64, 1);
+    order(64, 'cs_ledger');
+    item(64, 64, 3);
+    await markOrderPaid(env, { sessionId: 'cs_ledger' });
+    const movements = sql.all(`SELECT delta, reason FROM stock_movements WHERE product_id = 64`);
+    expect(movements).toHaveLength(1);
+    expect(movements[0]).toMatchObject({ delta: -3, reason: 'website_sale' });
+  });
+
+  it('does not flag twice when Stripe delivers the webhook again', async () => {
+    product(65, 1);
+    order(65, 'cs_dup');
+    item(65, 65, 2);
+    await markOrderPaid(env, { sessionId: 'cs_dup' });
+    await markOrderPaid(env, { sessionId: 'cs_dup' });
+    const { notes } = row(65);
+    expect(notes?.match(/Not enough stock/g) ?? []).toHaveLength(1);
+  });
+});

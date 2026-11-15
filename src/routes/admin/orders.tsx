@@ -534,7 +534,12 @@ orders.get('/', async (c) => {
                     {/* Shown here only on phones, where the Date column is hidden. */}
                     <div class="faint small show-when-narrow">{o.created_at?.slice(0, 10)}</div>
                   </td>
-                  <td>{statusPill(o.status)}</td>
+                  <td>
+                    {statusPill(o.status)}
+                    {/* A shortfall is invisible otherwise: stock clamps at
+                        zero, so the order looks like any other paid one. */}
+                    {o.oversold ? <span class="pill pill-bad">short on stock</span> : null}
+                  </td>
                   <td class="num">{formatPence(o.total_pence)}</td>
                   <td class="faint col-optional">{o.coupon_code ?? '—'}</td>
                   <td>
@@ -720,8 +725,15 @@ orders.get('/:id', async (c) => {
         <div>
           <h1>
             Order {order.order_number} {statusPill(order.status)}
+            {order.oversold ? <span class="pill pill-bad">short on stock</span> : null}
           </h1>
           <p class="muted">Placed {order.created_at}</p>
+          {order.oversold ? (
+            <p class="muted">
+              This order was paid for but there was not enough stock to fill it — see the notes below. Refund
+              the customer or restock before shipping.
+            </p>
+          ) : null}
         </div>
         <div class="actions">
           <a class="btn btn-secondary" href={`/admin/orders/${id}/slip`} target="_blank">
