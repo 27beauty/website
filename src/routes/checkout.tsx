@@ -155,12 +155,12 @@ checkout.get('/checkout/success', async (c) => {
               Order <strong>{withItems.order_number}</strong> —{' '}
               {withItems.status === 'paid'
                 ? 'payment confirmed, thank you!'
-                : "we'll email your confirmation once payment settles."}
+                : 'your payment is still settling — this page is your confirmation once it does.'}
             </p>
           ) : (
             <p class="muted">
-              We'll email your confirmation shortly once payment settles. If anything looks wrong,
-              contact {c.env.SUPPORT_EMAIL}.
+              Your payment is settling. Please keep a note of your order number — there is no automatic
+              confirmation email — and contact {c.env.SUPPORT_EMAIL} with it if anything looks wrong.
             </p>
           )}
         </div>
@@ -203,9 +203,13 @@ checkout.get('/checkout/success', async (c) => {
                 <span>{formatPence(withItems.total_pence)}</span>
               </li>
             </ul>
+            {/* The shop sends no automatic email: nothing in the worker can.
+                Promising one left a paying customer waiting for a message
+                that never came, which reads as a failed order. */}
             <p class="field-hint">
-              Delivery usually takes 2–5 working days. We'll email tracking details once your order
-              ships.
+              Delivery usually takes 2–5 working days. Please save your order number — this page is your
+              confirmation, and we don't send an automatic email. Ask us for tracking at {c.env.SUPPORT_EMAIL}
+              and quote that number.
             </p>
           </div>
         ) : null}

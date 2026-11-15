@@ -226,3 +226,32 @@ describe('PAY-03: a payment that lands is never dropped', () => {
     expect(stockOf(1)).toBe(5); // nothing taken
   });
 });
+
+describe('SF-04: the shop does not promise messages it cannot send', () => {
+  // There is no email sending anywhere in the worker. Telling a paying
+  // customer to expect a confirmation email meant they waited for something
+  // that never arrived and reasonably concluded the order had failed.
+  const files = ['src/routes/checkout.tsx', 'src/routes/storefront.tsx'];
+
+  it('makes no promise of an automatic confirmation or tracking email', async () => {
+    const { readFileSync } = await import('node:fs');
+    const offenders: string[] = [];
+    for (const f of files) {
+      readFileSync(f, 'utf8')
+        .split('\n')
+        .forEach((line, i) => {
+          if (/we'll email|email your confirmation|confirmation email as soon|further email with tracking/i.test(line)) {
+            offenders.push(`${f}:${i + 1} ${line.trim()}`);
+          }
+        });
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('tells the customer what to keep instead', async () => {
+    const { readFileSync } = await import('node:fs');
+    const checkout = readFileSync('src/routes/checkout.tsx', 'utf8');
+    expect(checkout).toMatch(/save your order number/i);
+    expect(checkout).toMatch(/don't send an automatic email/i);
+  });
+});

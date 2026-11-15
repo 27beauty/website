@@ -1029,9 +1029,10 @@ storefront.get('/pages/:slug', async (c) => {
         <>
           <h1>Delivery</h1>
           <p>
-            We dispatch every order from the UK, usually within 1-2 working days of payment clearing. You'll
-            get a confirmation email as soon as your order is placed, and a further email with tracking details
-            once it leaves us.
+            We dispatch every order from the UK, usually within 1-2 working days of payment clearing. The
+            page you see after paying is your confirmation, so please save your order number from it — we
+            don't send an automatic confirmation email. Get in touch quoting that number and we'll tell you
+            where your parcel is.
           </p>
           <h2>Delivery costs</h2>
           <p>
