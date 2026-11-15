@@ -310,11 +310,17 @@ textarea { min-height: 120px; resize: vertical; }
 .gallery-main { aspect-ratio: 1 / 1; display: grid; place-items: center; background: var(--surface); }
 .gallery-main img { width: 100%; height: 100%; object-fit: contain; padding: var(--space-4); }
 .gallery-thumbs { display: flex; gap: var(--space-2); padding: var(--space-3); overflow-x: auto; border-top: 1px solid var(--line); }
-.gallery-thumbs img {
-  width: 56px; height: 56px; object-fit: contain; border: 1px solid var(--line); border-radius: 8px;
+.gallery-thumb {
+  width: 56px; height: 56px; border: 1px solid var(--line); border-radius: 8px;
   padding: 4px; cursor: pointer; background: var(--surface); flex: none;
+  display: grid; place-items: center;
 }
-.gallery-thumbs img:hover { border-color: var(--brand); }
+.gallery-thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.gallery-thumb:hover { border-color: var(--brand); }
+/* The thumbnails are buttons so they can be reached by keyboard, which is
+   only useful if the focused one is visible. */
+.gallery-thumb:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.gallery-thumb[aria-pressed="true"] { border-color: var(--brand); }
 .price-lg { font-size: clamp(1.7rem, 1.4rem + 1vw, 2.1rem); font-weight: 800; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
 .qty-row { display: flex; gap: var(--space-3); align-items: end; flex-wrap: wrap; }
 .qty-row input { width: 88px; }

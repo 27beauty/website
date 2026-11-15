@@ -5,6 +5,7 @@ import { buildCart, clearCart, readCartLines, readCouponCode } from '../lib/cart
 import { listCategories } from '../lib/db';
 import { getSetting } from '../lib/settings';
 import { formatPence } from '../lib/money';
+import { supportEmail } from '../lib/util';
 import {
   attachStripeSession,
   checkStockForCheckout,
@@ -140,16 +141,24 @@ checkout.post('/checkout/session', startCheckout);
 checkout.get('/checkout/success', async (c) => {
   const sessionId = c.req.query('session_id');
   const categories = await listCategories(c.env).catch(() => []);
-  clearCart(c);
 
   const order = sessionId ? await getOrderByStripeSession(c.env, sessionId) : null;
   const withItems = order ? await getOrderWithItems(c.env, order.id) : null;
+
+  // Only an order we actually found empties the basket. This used to run
+  // unconditionally, above the lookup, so any GET of this URL — a bookmark, a
+  // shared link, a prefetch, someone pressing back — silently threw the
+  // shopper's basket away and then told them "thank you for your order, your
+  // payment is settling". Both halves were wrong: no payment had been taken,
+  // and the goods they had chosen were gone. A shopper who believes an order
+  // exists does not chase it.
+  if (withItems) clearCart(c);
 
   return c.html(
     <Layout title="Thank you" categories={categories} cartCount={c.get('cartCount')} noindex>
       <div class="stack">
         <div class="panel center">
-          <h1>Thank you for your order</h1>
+          <h1>{withItems ? 'Thank you for your order' : "We can't find that order"}</h1>
           {withItems ? (
             <p class="muted">
               Order <strong>{withItems.order_number}</strong> —{' '}
@@ -159,8 +168,11 @@ checkout.get('/checkout/success', async (c) => {
             </p>
           ) : (
             <p class="muted">
-              Your payment is settling. Please keep a note of your order number — there is no automatic
-              confirmation email — and contact {c.env.SUPPORT_EMAIL} with it if anything looks wrong.
+              We have no record of a payment for this link, so nothing has been charged and your basket is
+              still here. If you have just paid, give it a moment and reload this page. If you were charged
+              and this keeps saying the same thing, email{' '}
+              <a href={`mailto:${supportEmail(c.env.SUPPORT_EMAIL)}`}>{supportEmail(c.env.SUPPORT_EMAIL)}</a> and
+              we'll sort it out.
             </p>
           )}
         </div>
@@ -208,15 +220,16 @@ checkout.get('/checkout/success', async (c) => {
                 that never came, which reads as a failed order. */}
             <p class="field-hint">
               Delivery usually takes 2–5 working days. Please save your order number — this page is your
-              confirmation, and we don't send an automatic email. Ask us for tracking at {c.env.SUPPORT_EMAIL}
+              confirmation, and we don't send an automatic email. Ask us for tracking at{' '}
+              <a href={`mailto:${supportEmail(c.env.SUPPORT_EMAIL)}`}>{supportEmail(c.env.SUPPORT_EMAIL)}</a>
               and quote that number.
             </p>
           </div>
         ) : null}
 
         <div class="center">
-          <a class="btn" href="/shop">
-            Continue shopping
+          <a class="btn" href={withItems ? '/shop' : '/cart'}>
+            {withItems ? 'Continue shopping' : 'Back to your basket'}
           </a>
         </div>
       </div>

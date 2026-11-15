@@ -605,3 +605,124 @@ describe('SF-03: the returns policy is reachable', () => {
     expect(await body('/')).not.toContain('>Delivery &amp; returns<');
   });
 });
+
+describe('SF-01: the success page only claims an order it can find', () => {
+  /**
+   * `clearCart` ran unconditionally, above the order lookup, and the page said
+   * "Thank you for your order — your payment is settling" whether or not an
+   * order existed. So any GET of this URL without a payment behind it emptied
+   * the shopper's basket and told them an order was on its way. A shopper who
+   * believes that does not chase it.
+   */
+  const success = (query: string) =>
+    worker.fetch(new Request(`https://27beauty.co.uk/checkout/success${query}`), env, ctx());
+
+  it('does not claim an order when there is no session id', async () => {
+    const html = await (await success('')).text();
+    expect(html).toContain('We can&#39;t find that order'); // hono/jsx escapes the apostrophe
+    expect(html).not.toContain('Thank you for your order');
+  });
+
+  it('does not claim an order for a session id we have no record of', async () => {
+    const html = await (await success('?session_id=cs_test_never_seen')).text();
+    expect(html).toContain('We can&#39;t find that order');
+  });
+
+  it('leaves the basket alone when no order was found', async () => {
+    const res = await success('?session_id=cs_test_never_seen');
+    const cookies = res.headers.getSetCookie?.() ?? [];
+    // Clearing the basket is an expired/empty cart cookie. There must be none.
+    expect(cookies.filter((ck) => ck.startsWith('cart='))).toHaveLength(0);
+  });
+
+  it('sends the shopper back to the basket they still have', async () => {
+    const html = await (await success('')).text();
+    expect(html).toContain('href="/cart"');
+  });
+
+  it('thanks the shopper, and clears the basket, for an order it does find', async () => {
+    sql.exec(
+      `INSERT INTO orders (id, order_number, status, subtotal_pence, discount_pence,
+         shipping_pence, total_pence, currency, stripe_session_id)
+       VALUES (1, '27B-TEST01', 'paid', 1299, 0, 0, 1299, 'GBP', 'cs_test_real')`,
+    );
+    const res = await success('?session_id=cs_test_real');
+    const html = await res.text();
+    expect(html).toContain('Thank you for your order');
+    expect(html).toContain('27B-TEST01');
+    const cookies = res.headers.getSetCookie?.() ?? [];
+    expect(cookies.some((ck) => ck.startsWith('cart='))).toBe(true);
+  });
+});
+
+describe('SF-05: the image gallery works without a mouse', () => {
+  /**
+   * The thumbnails were bare <img> elements with a click listener: not
+   * focusable, no accessible name, no keyboard path. On a product page, whose
+   * job is showing the shopper what they are buying.
+   */
+  const productHtml = async () => {
+    sql.exec(
+      `INSERT INTO products (id, title, slug, price_pence, stock, status, category_id, images_json)
+       VALUES (50, 'Two Pictures', 'two-pictures', 999, 3, 'active', NULL,
+               '["https://img/a.jpg","https://img/b.jpg"]')`,
+    );
+    const res = await worker.fetch(new Request('https://27beauty.co.uk/product/two-pictures'), env, ctx());
+    return res.text();
+  };
+
+  it('renders each thumbnail as a focusable button', async () => {
+    const html = await productHtml();
+    expect(html).toContain('class="gallery-thumb"');
+    expect(html).not.toMatch(/<img[^>]*data-full/);
+  });
+
+  it('gives every thumbnail an accessible name saying which image it shows', async () => {
+    const html = await productHtml();
+    expect(html).toContain('aria-label="Show image 1 of 2"');
+    expect(html).toContain('aria-label="Show image 2 of 2"');
+  });
+
+  it('marks the image currently shown', async () => {
+    const html = await productHtml();
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('aria-pressed="false"');
+  });
+
+  it('drives the script off the buttons, so Enter and Space switch the image', async () => {
+    const html = await productHtml();
+    expect(html).toContain(".querySelectorAll('.gallery-thumb')");
+  });
+});
+
+describe('SF-01b: the confirmation page always names an address to write to', () => {
+  /**
+   * SUPPORT_EMAIL is a wrangler secret, so it is unset in a fresh environment.
+   * The static pages fell back to the real address; the order confirmation
+   * page interpolated it raw and rendered "email  and we'll sort it out" —
+   * telling a customer whose payment had just failed to write to nobody.
+   */
+  it('falls back when the secret is unset', async () => {
+    const { supportEmail, SUPPORT_EMAIL_FALLBACK } = await import('../src/lib/util');
+    expect(supportEmail(undefined)).toBe(SUPPORT_EMAIL_FALLBACK);
+    expect(supportEmail('')).toBe(SUPPORT_EMAIL_FALLBACK);
+    expect(supportEmail('   ')).toBe(SUPPORT_EMAIL_FALLBACK);
+  });
+
+  it('prefers the configured address', async () => {
+    const { supportEmail } = await import('../src/lib/util');
+    expect(supportEmail('help@27beauty.co.uk')).toBe('help@27beauty.co.uk');
+  });
+
+  it('shows a real mailto on the success page with no secret set', async () => {
+    const { SUPPORT_EMAIL_FALLBACK } = await import('../src/lib/util');
+    const res = await worker.fetch(
+      new Request('https://27beauty.co.uk/checkout/success?session_id=cs_nope'),
+      env,
+      ctx(),
+    );
+    const html = await res.text();
+    expect(html).toContain(`mailto:${SUPPORT_EMAIL_FALLBACK}`);
+    expect(html).not.toContain('email  and');
+  });
+});

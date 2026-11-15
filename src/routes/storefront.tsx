@@ -26,7 +26,7 @@ import {
 import { validateCoupon } from '../lib/coupons';
 import { getShippingConfig } from '../lib/settings';
 import { formatPence } from '../lib/money';
-import { clampInt, excerpt, isEmail, normaliseCouponCode, parseJsonArray } from '../lib/util';
+import { clampInt, excerpt, isEmail, normaliseCouponCode, parseJsonArray, supportEmail } from '../lib/util';
 import { createB2bInquiry } from '../lib/b2b';
 import { Layout } from '../ui/layout';
 import { trackEvent } from '../lib/analytics';
@@ -537,10 +537,24 @@ storefront.get('/product/:slug', async (c) => {
               <ImagePlaceholder label={product.title} />
             )}
           </div>
+            {/* Each thumbnail is a button, not a bare <img> with a click
+                handler. An image is not focusable and has no accessible name,
+                so a shopper using a keyboard or a screen reader could not
+                change the picture at all — on a page whose whole job is
+                showing them what they are buying. A button gets focus, fires
+                on Enter and Space for free, and says which image it shows. */}
           {images.length > 1 ? (
-            <div class="gallery-thumbs">
-              {images.map((src) => (
-                <img src={src} alt="" data-full={src} />
+            <div class="gallery-thumbs" role="group" aria-label={`${product.title} images`}>
+              {images.map((src, i) => (
+                <button
+                  type="button"
+                  class="gallery-thumb"
+                  data-full={src}
+                  aria-label={`Show image ${i + 1} of ${images.length}`}
+                  aria-pressed={i === 0 ? 'true' : 'false'}
+                >
+                  <img src={src} alt="" />
+                </button>
               ))}
             </div>
           ) : null}
@@ -599,7 +613,7 @@ storefront.get('/product/:slug', async (c) => {
       {images.length > 1 ? (
         <script
           dangerouslySetInnerHTML={{
-            __html: `document.querySelectorAll('.gallery-thumbs img').forEach(function(t){t.addEventListener('click',function(){var m=document.getElementById('mainImage');if(m&&t.dataset.full){m.src=t.dataset.full;}});});`,
+            __html: `var ts=document.querySelectorAll('.gallery-thumb');ts.forEach(function(t){t.addEventListener('click',function(){var m=document.getElementById('mainImage');if(!m||!t.dataset.full)return;m.src=t.dataset.full;ts.forEach(function(o){o.setAttribute('aria-pressed',o===t?'true':'false');});});});`,
           }}
         />
       ) : null}
@@ -1006,7 +1020,7 @@ storefront.get('/qr/:code', async (c) => qrLanding(c, c.req.param('code')));
 storefront.get('/pages/:slug', async (c) => {
   const slug = c.req.param('slug');
   const categories = await listCategories(c.env);
-  const email = c.env.SUPPORT_EMAIL || '27beautyltd@gmail.com';
+  const email = supportEmail(c.env.SUPPORT_EMAIL);
   const layoutFor = (title: string, description: string, body: unknown) =>
     c.html(
       <Layout
@@ -1259,7 +1273,7 @@ function renderB2bPage(
   categories: Awaited<ReturnType<typeof listCategories>>,
   opts: { notice?: { message: string; kind?: 'ok' | 'bad' }; values?: B2bFormValues } = {},
 ) {
-  const email = c.env.SUPPORT_EMAIL || '27beautyltd@gmail.com';
+  const email = supportEmail(c.env.SUPPORT_EMAIL);
   const values = opts.values ?? { businessName: '', contactName: '', email: '', phone: '', message: '' };
 
   return c.html(

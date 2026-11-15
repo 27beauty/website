@@ -171,3 +171,18 @@ export function csvSafeCell(value: string): string {
   if (/^-?\d+(\.\d+)?$/.test(value)) return value;
   return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
 }
+
+/** Where a shopper is told to write when something has gone wrong. */
+export const SUPPORT_EMAIL_FALLBACK = '27beautyltd@gmail.com';
+
+/**
+ * The support address, never blank.
+ *
+ * SUPPORT_EMAIL is a wrangler secret, so it is empty in a fresh environment
+ * and in tests. The static pages already fell back to the real address; the
+ * order confirmation page did not, and rendered "email  and we'll sort it
+ * out" — telling a customer whose payment had just failed to write to nobody.
+ */
+export function supportEmail(configured: string | undefined | null): string {
+  return (configured ?? '').trim() || SUPPORT_EMAIL_FALLBACK;
+}
