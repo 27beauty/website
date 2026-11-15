@@ -28,6 +28,7 @@ import {
   fetchOrderLines,
   fetchUpdatedOrders,
   newestUpdate,
+  AmazonHttpError,
   AmazonThrottledError,
   getCatalogDescription,
   getListingDetails,
@@ -1101,7 +1102,17 @@ export async function fillAmazonDimensions(
     } catch (err) {
       if (err instanceof AmazonThrottledError) break; // the rest on a later run
       errors.push(`Amazon ${r.sku}: ${errorText(err)}`);
-      continue; // not stamped, so it is tried again rather than written off
+      // A SKU Amazon no longer has is never going to answer. Leaving it
+      // unstamped meant asking again every five minutes for ever: three
+      // deleted SKUs were doing exactly that in production, ~860 wasted
+      // requests a day and three error lines in every run's summary. A 4xx is
+      // final, so stamp it; anything else may be a blip, so leave it to retry.
+      if (err instanceof AmazonHttpError && err.status >= 400 && err.status < 500) {
+        statements.push(
+          env.DB.prepare(`UPDATE products SET dimensions_checked_at = datetime('now') WHERE id = ?`).bind(r.id),
+        );
+      }
+      continue;
     }
     // Reselling against someone else's ASIN means submitting no dimensions of
     // your own, so most listings carry none and the catalogue entry for the

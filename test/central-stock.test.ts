@@ -48,6 +48,9 @@ interface FakeWorld {
   amazonOrders: unknown[];
   amazonItems: Record<string, unknown[]>;
   amazonCatalogue?: Record<string, unknown>;
+  /** SKUs Amazon 404s (deleted) and 500s (a blip). */
+  amazonGone?: Set<string>;
+  amazonBroken?: Set<string>;
   revised: { seller: string; itemId: string; quantity: number }[];
   /** getListingsItem (summaries, offers, attributes) per Amazon SKU. */
   amazonDetails?: Record<string, unknown>;
@@ -105,6 +108,8 @@ function installFakeFetch(world: FakeWorld) {
       }
       if (url.pathname.startsWith(`/listings/2021-08-01/items/${SELLER}/`) && (init.method ?? 'GET') === 'GET') {
         const sku = decodeURIComponent(url.pathname.split('/').pop() as string);
+        if (world.amazonGone?.has(sku)) return Response.json({ errors: [{ message: 'not found' }] }, { status: 404 });
+        if (world.amazonBroken?.has(sku)) return Response.json({ errors: [{ message: 'oops' }] }, { status: 500 });
         return Response.json(world.amazonDetails?.[sku] ?? {});
       }
       if (url.pathname.startsWith('/catalog/2022-04-01/items/')) {
@@ -729,6 +734,29 @@ describe('parcel size and weight for Parcel2Go', () => {
     world.amazonCatalogue = undefined;
     await fillAmazonDimensions(env, new Budget(20));
     expect((sizeOf(3) as { weight_g: number; checked: number }).weight_g).toBe(300);
+  });
+
+  it('stops asking about a SKU Amazon no longer has', async () => {
+    // Three deleted SKUs were being re-fetched every five minutes in
+    // production, because a failure left the product unstamped. A 404 is
+    // final: record that it was asked, and move on.
+    await goLive();
+    world.amazonDetails = { AMZ_MISSING: null } as never; // handler 404s unknown SKUs below
+    world.amazonGone = new Set(['AMZ-TSU']);
+    const first = await fillAmazonDimensions(env, new Budget(20));
+    expect(first.errors.length).toBeGreaterThan(0);
+    expect((sizeOf(3) as { checked: number }).checked).toBe(1);
+    // ...and it is not asked again.
+    const budget = new Budget(20);
+    await fillAmazonDimensions(env, budget);
+    expect(budget.remaining).toBe(20);
+  });
+
+  it('keeps retrying a SKU that failed for a reason that might pass', async () => {
+    await goLive();
+    world.amazonBroken = new Set(['AMZ-TSU']); // 500, not 404
+    await fillAmazonDimensions(env, new Budget(20));
+    expect((sizeOf(3) as { checked: number }).checked).toBe(0);
   });
 
   it('leaves a product with no Amazon listing alone — Amazon cannot say anything about it', async () => {

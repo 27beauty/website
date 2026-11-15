@@ -20,6 +20,21 @@ const SP_API = 'https://sellingpartnerapi-eu.amazon.com';
 export const UK_MARKETPLACE = 'A1F83G8C2ARO7P';
 const TOKEN_KV_KEY = 'amazon:lwa-token';
 
+/**
+ * An Amazon response that was not OK, carrying the status so callers can tell
+ * a permanent refusal from a blip. A 404 means the SKU is gone and asking
+ * again will never help; a 5xx is worth retrying.
+ */
+export class AmazonHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'AmazonHttpError';
+  }
+}
+
 export class AmazonThrottledError extends Error {
   constructor() {
     super('Amazon rate limit (HTTP 429) — will retry next run');
@@ -78,7 +93,7 @@ async function sp<T>(env: Env, counter: CallCounter, path: string, init: Request
     } catch {
       detail = text.slice(0, 200);
     }
-    throw new Error(`Amazon ${path.split('?')[0]}: HTTP ${res.status}${detail ? ` — ${detail}` : ''}`);
+    throw new AmazonHttpError(res.status, `Amazon ${path.split('?')[0]}: HTTP ${res.status}${detail ? ` — ${detail}` : ''}`);
   }
   return (await res.json()) as T;
 }
