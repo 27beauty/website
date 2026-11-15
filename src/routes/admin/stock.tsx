@@ -166,6 +166,45 @@ stock.get('/', async (c) => {
         </div>
       ) : null}
 
+      {rows.length ? (
+        <form method="post" action="/admin/products/bulk-delete" id="bulk-delete-form" class="stock-bulk">
+          <CsrfField token={admin.csrf} />
+          <input type="hidden" name="back" value={backUrl} />
+          <label class="stock-bulk-all">
+            <input type="checkbox" id="stock-pick-all" />
+            Select all on this page
+          </label>
+          {/* No confirm here: this posts to a page that lists exactly what
+              would go, because deleting is permanent and in bulk a stray
+              click is expensive. */}
+          <button class="btn btn-danger btn-sm" type="submit" id="stock-delete-selected" disabled>
+            Delete selected
+          </button>
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `(() => {
+  const form = document.getElementById('bulk-delete-form');
+  const all = document.getElementById('stock-pick-all');
+  const go = document.getElementById('stock-delete-selected');
+  if (!form || !all || !go) return;
+  const boxes = () => Array.from(document.querySelectorAll('input.stock-pick'));
+  const sync = () => {
+    const n = boxes().filter((b) => b.checked).length;
+    go.disabled = n === 0;
+    go.textContent = n ? 'Delete selected (' + n + ')' : 'Delete selected';
+    const total = boxes().length;
+    all.checked = n > 0 && n === total;
+    all.indeterminate = n > 0 && n < total;
+  };
+  all.addEventListener('change', () => { boxes().forEach((b) => { b.checked = all.checked; }); sync(); });
+  document.addEventListener('change', (e) => { if (e.target && e.target.classList && e.target.classList.contains('stock-pick')) sync(); });
+  sync();
+})();`,
+            }}
+          />
+        </form>
+      ) : null}
+
       <form method="post" action="/admin/stock" id="stock-form">
         <CsrfField token={admin.csrf} />
         <input type="hidden" name="view" value={view} />
@@ -173,6 +212,17 @@ stock.get('/', async (c) => {
         <ul class="stock-list">
           {rows.map((p) => (
             <li>
+              {/* Belongs to the delete form further down, not the Save stock
+                  form it sits inside — HTML has no nested forms, but an input
+                  may name the form it belongs to wherever it appears. */}
+              <input
+                type="checkbox"
+                class="stock-pick"
+                name="id"
+                value={p.id}
+                form="bulk-delete-form"
+                aria-label={`Select ${p.title}`}
+              />
               <div class="stock-main">
                 <a href={`/admin/products/${p.id}`} class="stock-title">
                   {p.title}
@@ -223,6 +273,8 @@ stock.get('/', async (c) => {
           </span>
         </div>
       </form>
+
+
     </AdminLayout>,
   );
 });

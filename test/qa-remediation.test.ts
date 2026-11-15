@@ -355,3 +355,91 @@ describe('the money path, end to end through the real webhook', () => {
     expect(sql.all(`SELECT stock FROM products WHERE id = 1`)).toEqual([{ stock: 3 }]);
   });
 });
+
+describe('deleting several products at once from the Stock screen', () => {
+  /**
+   * Driven through the real admin route with a real signed session and CSRF
+   * token, because this is the most destructive control in the panel: one
+   * click can remove a hundred products and stop the sync re-importing them.
+   */
+  const SECRET = 'test-session-secret-0123456789abcdef';
+  const CSRF = 'csrf-token-for-test';
+  let cookie = '';
+
+  beforeEach(async () => {
+    const { signPayload } = await import('../src/lib/crypto');
+    const token = 'tok-test';
+    await env.KV.put(
+      `admin:session:${token}`,
+      JSON.stringify({ userId: 1, email: 'o@x.dev', name: null, role: 'owner', issuedAt: Date.now(), csrf: CSRF }),
+    );
+    cookie = `admin_session=${await signPayload(token, SECRET)}`;
+    sql.exec(`
+      INSERT INTO products (id, slug, title, price_pence, stock, status, source, ebay_item_id, ebay_account) VALUES
+        (1, 'a', 'Product A', 100, 5, 'active', 'ebay', 'v1|801|0', 'adinath0'),
+        (2, 'b', 'Product B', 100, 5, 'active', 'manual', NULL, NULL),
+        (3, 'c', 'Product C', 100, 5, 'active', 'manual', NULL, NULL);
+    `);
+  });
+
+  const post = (fields: string[][]) =>
+    worker.fetch(
+      new Request('https://27beauty.co.uk/admin/products/bulk-delete', {
+        method: 'POST',
+        body: new URLSearchParams(fields).toString(),
+        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      }),
+      { ...env, SESSION_SECRET: SECRET } as Env,
+      ctx(),
+    );
+
+  const titles = () => (sql.all(`SELECT title FROM products ORDER BY id`) as { title: string }[]).map((r) => r.title);
+
+  it('asks first and deletes nothing on the way', async () => {
+    const res = await post([
+      ['_csrf', CSRF],
+      ['back', '/admin/stock'],
+      ['id', '1'],
+      ['id', '2'],
+    ]);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Delete 2 products?');
+    // It must name them, so the owner can see what they actually ticked.
+    expect(html).toContain('Product A');
+    expect(html).toContain('Product B');
+    expect(titles()).toEqual(['Product A', 'Product B', 'Product C']); // nothing gone yet
+  });
+
+  it('deletes exactly the ones ticked once confirmed', async () => {
+    const res = await post([
+      ['_csrf', CSRF],
+      ['back', '/admin/stock'],
+      ['confirm', '1'],
+      ['id', '1'],
+      ['id', '3'],
+    ]);
+    expect(res.status).toBe(303);
+    expect(titles()).toEqual(['Product B']);
+  });
+
+  it('stops the sync importing a deleted product straight back', async () => {
+    await post([['_csrf', CSRF], ['confirm', '1'], ['id', '1']]);
+    // Product A came from eBay; its listing must be blocked or the next
+    // catalogue sync simply recreates it.
+    expect(sql.all(`SELECT status FROM channel_listings WHERE external_id = '801'`)).toEqual([{ status: 'blocked' }]);
+  });
+
+  it('refuses a request without a valid CSRF token', async () => {
+    const res = await post([['_csrf', 'wrong'], ['confirm', '1'], ['id', '1']]);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toContain('err=');
+    expect(titles()).toHaveLength(3); // untouched
+  });
+
+  it('says so when nothing was ticked', async () => {
+    const res = await post([['_csrf', CSRF], ['confirm', '1']]);
+    expect(res.headers.get('location')).toContain('Nothing+was+selected');
+    expect(titles()).toHaveLength(3);
+  });
+});

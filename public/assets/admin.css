@@ -520,6 +520,19 @@ input[inputmode="decimal"], input[type="number"] { font-variant-numeric: tabular
 .stock-delete { color: var(--bad); }
 .stock-delete:hover { text-decoration: underline; }
 
+/* Tick boxes for deleting several at once. Sized for a thumb, since the
+   owner works from a phone, and pulled left so the row still reads title
+   first. */
+/* The admin-wide 44px tap-target rule applies to every input, which stretches
+   a checkbox into a tall rectangle on a row whose title wraps. Beaten here on
+   specificity and kept square — 24px, a bit larger than the browser default,
+   since this is used with a thumb. */
+.admin-page input.stock-pick { flex: none; align-self: center; width: 24px; height: 24px; min-height: 0; accent-color: var(--brand); }
+.stock-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 10px 0 4px; }
+.stock-bulk-all { display: flex; align-items: center; gap: 8px; font-size: .9rem; color: var(--ink-soft); min-height: var(--tap, 44px); }
+.admin-page .stock-bulk-all input { width: 24px; height: 24px; min-height: 0; accent-color: var(--brand); }
+.stock-bulk .btn-danger[disabled] { opacity: .45; cursor: not-allowed; }
+
 /* After deleting a product that was also on a marketplace: one row per listing
    still live there, each with a direct link. Stacks on a phone so the link is
    never squeezed. */

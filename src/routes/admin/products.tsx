@@ -1567,6 +1567,114 @@ export function priceLockAfterEdit(
   return lockTicked || (existing.price_locked === 0 && newPricePence !== existing.price_pence);
 }
 
+/** How many products one bulk delete may remove. The Stock page shows 100. */
+const BULK_DELETE_MAX = 100;
+
+/**
+ * Deleting several products at once from the Stock screen.
+ *
+ * Two steps on purpose. The first post only lists what was ticked and asks;
+ * deleting is permanent, it stops the marketplace sync re-importing those
+ * products, and in bulk one stray click is expensive. Nothing is removed
+ * until the second post carries `confirm`.
+ */
+products.post('/bulk-delete', async (c) => {
+  const admin = getAdmin(c);
+  const body = await c.req.parseBody({ all: true });
+  const back = typeof body.back === 'string' && body.back ? body.back : '/admin/stock';
+  if (!verifyCsrf(c, typeof body._csrf === 'string' ? body._csrf : undefined)) {
+    return c.redirect(redirectWith(back, { err: 'Your session expired — please try again.' }), 303);
+  }
+
+  const raw = body.id;
+  const ids = (Array.isArray(raw) ? raw : raw === undefined ? [] : [raw])
+    .map((v) => Number(typeof v === 'string' ? v : NaN))
+    .filter((n) => Number.isInteger(n) && n > 0)
+    .slice(0, BULK_DELETE_MAX);
+  if (!ids.length) {
+    return c.redirect(redirectWith(back, { err: 'Nothing was selected.' }), 303);
+  }
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, title FROM products WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY title COLLATE NOCASE`,
+  )
+    .bind(...ids)
+    .all<{ id: number; title: string }>();
+  const found = results ?? [];
+  if (!found.length) {
+    return c.redirect(redirectWith(back, { err: 'Those products no longer exist.' }), 303);
+  }
+
+  if (body.confirm !== '1') {
+    return c.html(
+      <AdminLayout title="Delete products" active="stock" admin={admin}>
+        <div class="admin-panel" style="max-width:560px;">
+          <h1>
+            Delete {found.length} product{found.length === 1 ? '' : 's'}?
+          </h1>
+          <p class="muted">
+            This permanently removes {found.length === 1 ? 'it' : 'them'} from the catalogue. Past orders keep
+            their own copy of the line item, so order history is unaffected. This cannot be undone.
+          </p>
+          <p class="muted">
+            Any eBay and Amazon listings are left alone and stay on sale there — but they are marked so the
+            sync will not put these products back on the website.
+          </p>
+          <ul class="deleted-listings">
+            {found.map((p) => (
+              <li>
+                <span class="deleted-listing-name">{p.title}</span>
+              </li>
+            ))}
+          </ul>
+          <form method="post" action="/admin/products/bulk-delete">
+            <CsrfField token={admin.csrf} />
+            <input type="hidden" name="back" value={back} />
+            <input type="hidden" name="confirm" value="1" />
+            {found.map((p) => (
+              <input type="hidden" name="id" value={p.id} />
+            ))}
+            <div class="row">
+              <button class="btn btn-danger" type="submit">
+                Delete {found.length} product{found.length === 1 ? '' : 's'} permanently
+              </button>
+              <a class="btn btn-secondary" href={back}>
+                Cancel
+              </a>
+            </div>
+          </form>
+        </div>
+      </AdminLayout>,
+    );
+  }
+
+  // Block before deleting: each product's listings must be marked so the eBay
+  // sync does not simply import it again on its next run.
+  let removedImages = 0;
+  const blocked: number[] = [];
+  for (const p of found) {
+    blocked.push(...(await blockProductListings(c.env, p.id)));
+    removedImages += await deleteProductImages(c.env, p.id);
+  }
+  for (const slice of inChunks(found.map((p) => p.id))) {
+    await c.env.DB.prepare(`DELETE FROM products WHERE id IN (${slice.map(() => '?').join(',')})`)
+      .bind(...slice)
+      .run();
+  }
+
+  const msg = `${found.length} product${found.length === 1 ? '' : 's'} deleted${removedImages ? `, along with ${removedImages} stored image${removedImages === 1 ? '' : 's'}` : ''}.`;
+  if (blocked.length) {
+    const q = new URLSearchParams({
+      ids: blocked.slice(0, 20).join(','),
+      title: `${found.length} product${found.length === 1 ? '' : 's'}`,
+      back,
+      msg,
+    });
+    return c.redirect(`/admin/products/deleted?${q.toString()}`, 303);
+  }
+  return c.redirect(redirectWith(back, { msg }), 303);
+});
+
 products.post('/:id', async (c) => {
   const admin = getAdmin(c);
   const id = Number(c.req.param('id'));
