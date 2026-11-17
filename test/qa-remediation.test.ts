@@ -875,3 +875,123 @@ describe('PAY-01: an order the shop cannot fill is flagged, not shipped blind', 
     expect(notes?.match(/Not enough stock/g) ?? []).toHaveLength(1);
   });
 });
+
+describe('PAY-04: the per-customer coupon limit is actually enforced', () => {
+  /**
+   * "Per-customer limit" is a field on every coupon in the admin panel, and it
+   * was enforced on no website order at all: validateCoupon only checks it
+   * when given an email, and no caller has one — the basket knows nothing
+   * about the shopper and createPendingOrder stores email: null, because
+   * Stripe Checkout is what collects it. So a shopper could scan the QR card
+   * off their parcel and take 10% off every order forever. The webhook is the
+   * first moment the email exists, which is after the payment, so the limit
+   * is reported on the order rather than refused.
+   */
+  const coupon = (limit: number | null) =>
+    sql.exec(
+      `INSERT INTO coupons (id, code, kind, value, per_customer_limit, active)
+       VALUES (1, 'QR10', 'percent', 10, ${limit === null ? 'NULL' : limit}, 1)`,
+    );
+
+  const redeem = async (id: number, email: string) => {
+    sql.exec(
+      `INSERT INTO orders (id, order_number, status, subtotal_pence, discount_pence, shipping_pence,
+         total_pence, currency, coupon_code, stripe_session_id)
+       VALUES (${id}, '27B-C${id}', 'paid', 1000, 100, 0, 900, 'GBP', 'QR10', 'cs_c${id}')`,
+    );
+    const { recordRedemption } = await import('../src/lib/coupons');
+    return recordRedemption(env, 1, id, email, 100);
+  };
+
+  it('lets the first use through', async () => {
+    coupon(1);
+    expect(await redeem(70, 'shopper@example.com')).toMatchObject({
+      recorded: true,
+      overLimit: false,
+      perCustomerExceeded: false,
+    });
+  });
+
+  it('reports the same customer using it a second time', async () => {
+    coupon(1);
+    await redeem(71, 'shopper@example.com');
+    const res = await redeem(72, 'shopper@example.com');
+    expect(res.recorded).toBe(true); // the payment happened; the ledger stays honest
+    expect(res.perCustomerExceeded).toBe(true);
+  });
+
+  it('matches the customer regardless of how they typed their address', async () => {
+    coupon(1);
+    await redeem(73, 'shopper@example.com');
+    expect((await redeem(74, 'Shopper@Example.COM')).perCustomerExceeded).toBe(true);
+  });
+
+  it('leaves a different customer alone', async () => {
+    coupon(1);
+    await redeem(75, 'one@example.com');
+    expect((await redeem(76, 'two@example.com')).perCustomerExceeded).toBe(false);
+  });
+
+  it('honours a limit above one', async () => {
+    coupon(2);
+    await redeem(77, 'shopper@example.com');
+    expect((await redeem(78, 'shopper@example.com')).perCustomerExceeded).toBe(false);
+    expect((await redeem(79, 'shopper@example.com')).perCustomerExceeded).toBe(true);
+  });
+
+  it('never reports when the coupon has no per-customer limit', async () => {
+    coupon(null);
+    await redeem(80, 'shopper@example.com');
+    expect((await redeem(81, 'shopper@example.com')).perCustomerExceeded).toBe(false);
+  });
+
+  it('writes the reason onto the order, through the real webhook', async () => {
+    coupon(1);
+    // This customer has used the card once already.
+    sql.exec(
+      // order_id NULL: an earlier redemption whose order has since been deleted
+      // is still a redemption by this customer.
+      `INSERT INTO coupon_redemptions (coupon_id, order_id, email, amount_pence)
+       VALUES (1, NULL, 'shopper@example.com', 100)`,
+    );
+    sql.exec(
+      `INSERT INTO orders (id, order_number, status, subtotal_pence, discount_pence, shipping_pence,
+         total_pence, currency, coupon_code, stripe_session_id)
+       VALUES (82, '27B-C82', 'pending', 1000, 100, 0, 900, 'GBP', 'QR10', 'cs_c82')`,
+    );
+
+    const SECRET = 'whsec_test_secret';
+    const body = JSON.stringify({
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_c82',
+          payment_status: 'paid',
+          customer_details: { email: 'shopper@example.com' },
+        },
+      },
+    });
+    const t = Math.floor(Date.now() / 1000);
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(SECRET),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${t}.${body}`));
+    const v1 = [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, '0')).join('');
+    await worker.fetch(
+      new Request('https://27beauty.co.uk/webhooks/stripe', {
+        method: 'POST',
+        body,
+        headers: { 'stripe-signature': `t=${t},v1=${v1}`, 'content-type': 'application/json' },
+      }),
+      { ...env, STRIPE_WEBHOOK_SECRET: SECRET, STRIPE_SECRET_KEY: 'sk_test_dummy' } as Env,
+      ctx(),
+    );
+
+    const notes = (sql.all('SELECT notes FROM orders WHERE id = 82')[0] as { notes: string | null }).notes;
+    expect(notes).toContain('per customer');
+  });
+});

@@ -46,26 +46,28 @@ async function handlePaidSession(env: AppBindings['Bindings'], session: Stripe.C
   if (transitioned && order?.coupon_code) {
     const coupon = await findCoupon(env, order.coupon_code);
     if (coupon) {
-      const { overLimit } = await recordRedemption(
+      const { overLimit, perCustomerExceeded } = await recordRedemption(
         env,
         coupon.id,
         order.id,
         order.email,
         order.discount_pence,
       );
-      if (overLimit) {
-        // Two customers used the same capped card at once. The payment has
-        // already been taken, so flag it for the owner rather than failing.
+      // Both of these can only be known after the payment, so they are
+      // reported on the order rather than refused.
+      const flag = overLimit
+        ? `Coupon ${coupon.code} was already at its redemption limit when this order paid — check before dispatch.`
+        : perCustomerExceeded
+          ? `Coupon ${coupon.code} is limited to ${coupon.per_customer_limit} use(s) per customer and this customer has now used it more than that — check before dispatch.`
+          : null;
+      if (flag) {
         await env.DB.prepare(
           `UPDATE orders
               SET notes = COALESCE(notes || char(10), '') || ?,
                   updated_at = datetime('now')
             WHERE id = ?`,
         )
-          .bind(
-            `Coupon ${coupon.code} was already at its redemption limit when this order paid — check before dispatch.`,
-            order.id,
-          )
+          .bind(flag, order.id)
           .run();
       }
     }

@@ -170,6 +170,12 @@ export interface RedemptionResult {
   recorded: boolean;
   /** True when the code was already at its redemption limit — needs a human. */
   overLimit: boolean;
+  /**
+   * True when this redemption took the customer past the code's per-customer
+   * limit. Like `overLimit`, the payment is already taken by the time we can
+   * tell, so it is reported rather than refused.
+   */
+  perCustomerExceeded: boolean;
 }
 
 /**
@@ -200,7 +206,7 @@ export async function recordRedemption(
 
   if ((claim.meta.changes ?? 0) === 0) {
     // Already at the cap. Record nothing, and tell the caller to flag it.
-    return { recorded: false, overLimit: true };
+    return { recorded: false, overLimit: true, perCustomerExceeded: false };
   }
 
   const res = await env.DB.prepare(
@@ -215,8 +221,40 @@ export async function recordRedemption(
     await env.DB.prepare('UPDATE coupons SET times_used = MAX(0, times_used - 1) WHERE id = ?')
       .bind(couponId)
       .run();
-    return { recorded: false, overLimit: false };
+    return { recorded: false, overLimit: false, perCustomerExceeded: false };
   }
 
-  return { recorded: true, overLimit: false };
+  /**
+   * The per-customer limit, which can only be judged here.
+   *
+   * `validateCoupon` checks it too, but only when it is given an email, and no
+   * caller has one: the basket and the cart page know nothing about the
+   * shopper, and `createPendingOrder` stores `email: null` because Stripe
+   * Checkout is what collects it. So "Per-customer limit", a field the owner
+   * can set on every coupon in the admin panel, was enforced on no website
+   * order at all — a shopper could scan the QR card off their parcel and take
+   * 10% off every order forever. This is the first moment the email exists.
+   *
+   * The payment has already been taken by now, so the limit cannot be refused,
+   * only reported — the same choice the redemption cap makes just above. And
+   * it stays a soft control: a shopper who uses a second email address is a
+   * second customer as far as the shop can tell. It catches the ordinary case,
+   * which is someone reusing their own card without thinking about it.
+   */
+  let perCustomerExceeded = false;
+  if (email) {
+    const row = await env.DB.prepare(
+      `SELECT c.per_customer_limit AS lim,
+              (SELECT COUNT(*) FROM coupon_redemptions r
+                WHERE r.coupon_id = c.id AND r.email IS NOT NULL AND lower(r.email) = lower(?)) AS used
+         FROM coupons c
+        WHERE c.id = ?`,
+    )
+      .bind(email, couponId)
+      .first<{ lim: number | null; used: number }>();
+    // `used` counts the row just inserted, so going over means this order did it.
+    perCustomerExceeded = row?.lim != null && (row.used ?? 0) > row.lim;
+  }
+
+  return { recorded: true, overLimit: false, perCustomerExceeded };
 }
