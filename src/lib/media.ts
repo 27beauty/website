@@ -146,6 +146,58 @@ export async function recordUpload(env: Env, bytes: number): Promise<void> {
   await env.DB.prepare(`DELETE FROM settings WHERE key LIKE ? AND key != ?`).bind(`${KEY_UPLOADS_PREFIX}%`, today).run();
 }
 
+/**
+ * Takes the bytes out of the budget before the file is written.
+ *
+ * `canStore` and `recordUpload` were a check and then an act: both read the
+ * counter, decided there was room, wrote to R2, and only then added their
+ * bytes. Two uploads starting together therefore both passed a check that was
+ * already stale, and the budget could be overshot by as much as they were
+ * carrying. R2 has no spending cap, so the budget is the only cap there is and
+ * it must not be possible to walk past it.
+ *
+ * The decision and the increment are one statement here — the counter only
+ * moves if the new total still fits — so the second upload loses the race
+ * cleanly and is refused. Returns false when there is no room.
+ *
+ * A reservation whose upload then fails is given back by `releaseUpload`. If
+ * the Worker dies in between, the bytes stay reserved and storage reads
+ * fuller than it is, which errs towards refusing uploads rather than
+ * exceeding the allowance; Settings → "Recount from R2" puts it right.
+ */
+export async function reserveUpload(env: Env, bytes: number): Promise<boolean> {
+  const budget = Math.min(
+    await readNumber(env, KEY_BUDGET, DEFAULT_MEDIA_BUDGET_BYTES),
+    FREE_STORAGE_BYTES,
+  );
+  await env.DB.prepare(
+    `INSERT INTO settings (key, value, updated_at) VALUES (?, '0', datetime('now'))
+     ON CONFLICT(key) DO NOTHING`,
+  )
+    .bind(KEY_BYTES)
+    .run();
+  const res = await env.DB.prepare(
+    `UPDATE settings
+        SET value = CAST(CAST(value AS INTEGER) + ? AS TEXT),
+            updated_at = datetime('now')
+      WHERE key = ?
+        AND CAST(value AS INTEGER) + ? <= ?`,
+  )
+    .bind(bytes, KEY_BYTES, bytes, budget)
+    .run();
+  if ((res.meta.changes ?? 0) === 0) return false;
+
+  const today = uploadsKey();
+  await Promise.all([bump(env, KEY_COUNT, 1), bump(env, today, 1)]);
+  await env.DB.prepare(`DELETE FROM settings WHERE key LIKE ? AND key != ?`).bind(`${KEY_UPLOADS_PREFIX}%`, today).run();
+  return true;
+}
+
+/** Gives a reservation back when the upload it was taken for did not happen. */
+export async function releaseUpload(env: Env, bytes: number): Promise<void> {
+  await Promise.all([bump(env, KEY_BYTES, -bytes), bump(env, KEY_COUNT, -1)]);
+}
+
 export async function recordDelete(env: Env, bytes: number): Promise<void> {
   await Promise.all([bump(env, KEY_BYTES, -bytes), bump(env, KEY_COUNT, -1)]);
 }

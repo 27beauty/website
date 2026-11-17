@@ -995,3 +995,75 @@ describe('PAY-04: the per-customer coupon limit is actually enforced', () => {
     expect(notes).toContain('per customer');
   });
 });
+
+describe('S3: the R2 budget cannot be walked past', () => {
+  /**
+   * R2 has no spending cap, so this budget is the only cap there is. canStore
+   * and recordUpload were a check and then an act: both read the counter,
+   * decided there was room, wrote to R2, and only then added their bytes. Two
+   * uploads starting together both passed a check that was already stale.
+   */
+  const media = async () => await import('../src/lib/media');
+
+  const setBudget = async (bytes: number, used: number) => {
+    sql.exec(`INSERT INTO settings (key, value) VALUES ('media.max_bytes', '${bytes}')`);
+    sql.exec(`INSERT INTO settings (key, value) VALUES ('media.bytes_used', '${used}')`);
+  };
+  const used = () =>
+    Number((sql.all(`SELECT value FROM settings WHERE key = 'media.bytes_used'`)[0] as { value: string }).value);
+
+  it('allows an upload that fits', async () => {
+    const { reserveUpload } = await media();
+    await setBudget(1000, 0);
+    expect(await reserveUpload(env, 400)).toBe(true);
+    expect(used()).toBe(400);
+  });
+
+  it('refuses one that does not, and takes nothing', async () => {
+    const { reserveUpload } = await media();
+    await setBudget(1000, 900);
+    expect(await reserveUpload(env, 400)).toBe(false);
+    expect(used()).toBe(900);
+  });
+
+  it('allows an upload that exactly fills the budget', async () => {
+    const { reserveUpload } = await media();
+    await setBudget(1000, 600);
+    expect(await reserveUpload(env, 400)).toBe(true);
+    expect(used()).toBe(1000);
+  });
+
+  it('lets only one of two uploads racing for the last of the budget through', async () => {
+    const { reserveUpload } = await media();
+    await setBudget(1000, 600);
+    // Both would have passed the old read-then-check.
+    const [a, b] = await Promise.all([reserveUpload(env, 400), reserveUpload(env, 400)]);
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    expect(used()).toBe(1000); // never 1400
+  });
+
+  it('never exceeds the budget however many pile in at once', async () => {
+    const { reserveUpload } = await media();
+    await setBudget(1000, 0);
+    const results = await Promise.all(Array.from({ length: 10 }, () => reserveUpload(env, 300)));
+    expect(results.filter(Boolean)).toHaveLength(3);
+    expect(used()).toBe(900);
+  });
+
+  it('is capped at the free allowance even if the setting is raised past it', async () => {
+    const { reserveUpload, FREE_STORAGE_BYTES } = await media();
+    await setBudget(FREE_STORAGE_BYTES * 5, FREE_STORAGE_BYTES - 100);
+    expect(await reserveUpload(env, 500)).toBe(false);
+    expect(await reserveUpload(env, 100)).toBe(true);
+  });
+
+  it('gives the bytes back when the upload itself fails', async () => {
+    const { reserveUpload, releaseUpload } = await media();
+    await setBudget(1000, 0);
+    await reserveUpload(env, 400);
+    await releaseUpload(env, 400);
+    expect(used()).toBe(0);
+    // And the freed room is usable again.
+    expect(await reserveUpload(env, 1000)).toBe(true);
+  });
+});

@@ -17,7 +17,8 @@ import {
   deleteStoredImage,
   formatBytes,
   getMediaUsage,
-  recordUpload,
+  releaseUpload,
+  reserveUpload,
 } from '../../lib/media';
 
 /** Product catalogue: list, editor, image upload, CSV import/export.
@@ -1948,9 +1949,33 @@ products.post('/:id/image', async (c) => {
     .bind(id)
     .first<{ image_url: string | null }>();
 
+  // Take the bytes out of the budget before writing them, so two uploads
+  // starting together cannot both pass a check and overshoot the allowance
+  // between them. R2 has no spending cap, so this budget is the only one.
+  if (!(await reserveUpload(c.env, file.size))) {
+    const usage = await getMediaUsage(c.env);
+    return c.redirect(
+      `/admin/products/${id}?err=` +
+        encodeURIComponent(
+          `This upload would take image storage past its ${formatBytes(usage.budgetBytes)} limit ` +
+            `(${formatBytes(usage.bytesUsed)} used). Delete some images first.`,
+        ),
+      303,
+    );
+  }
+
   // The File goes straight to R2, without a second in-memory copy (large photos).
-  await c.env.MEDIA.put(key, file, { httpMetadata: { contentType: file.type } });
-  await recordUpload(c.env, file.size);
+  try {
+    await c.env.MEDIA.put(key, file, { httpMetadata: { contentType: file.type } });
+  } catch (err) {
+    // Nothing was stored, so the reservation must not be kept.
+    await releaseUpload(c.env, file.size);
+    console.error('Image upload to R2 failed', err);
+    return c.redirect(
+      `/admin/products/${id}?err=` + encodeURIComponent('That image could not be saved. Please try again.'),
+      303,
+    );
+  }
 
   // Stored under the public /media/ route (src/index.tsx), not /admin/media —
   // robots.txt disallows /admin, and product photos need to be crawlable.
